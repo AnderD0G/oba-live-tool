@@ -9,6 +9,7 @@ import { useAutoReply } from '@/hooks/useAutoReply'
 import { useCurrentLiveControl } from '@/hooks/useLiveControl'
 import CommentList from '@/pages/AutoReply/components/CommentList'
 import PreviewList from '@/pages/AutoReply/components/PreviewList'
+import { CodexDraftSettings } from './components/CodexDraft'
 
 export default function AutoReply() {
   const { isRunning, setIsRunning } = useAutoReply()
@@ -47,6 +48,7 @@ export default function AutoReply() {
         </div>
       </div>
 
+      <CodexDraftSettings />
       {/* 评论和回复区域 */}
       <div className="grid grid-cols-2 gap-4">
         {/* 评论列表卡片 */}

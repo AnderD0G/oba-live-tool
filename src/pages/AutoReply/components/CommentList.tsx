@@ -1,5 +1,5 @@
-import { motion } from 'framer-motion'
 import { Pause, Play, RefreshCcw } from 'lucide-react'
+import { motion } from 'motion/react'
 import { memo, useId, useMemo, useState } from 'react'
 import { IPC_CHANNELS } from 'shared/ipcChannels'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +15,7 @@ import { useAutoReplyConfig } from '@/hooks/useAutoReplyConfig'
 import { useCurrentLiveControl } from '@/hooks/useLiveControl'
 import { useToast } from '@/hooks/useToast'
 import { cn } from '@/lib/utils'
+import { CodexDraftButton } from './CodexDraft'
 
 const getMessageColor = (type: Message['msg_type']) => {
   switch (type) {
@@ -101,6 +102,11 @@ const MessageItem = memo(
             >
               {getMessageText(message)}
             </p>
+            {'content' in message &&
+              typeof message.content === 'string' &&
+              message.content.trim() && (
+                <CodexDraftButton comment={message.content} nickname={displayName} />
+              )}
           </div>
         </div>
       </div>
@@ -264,7 +270,7 @@ export default function CommentList({
             ) : (
               filteredComments.map(comment => (
                 <MessageItem
-                  key={comment.msg_id}
+                  key={`${currentAccountId}:${comment.msg_id}`}
                   message={comment}
                   // isHost={comment.nick_name === accountName}
                   isHighlighted={highlightedCommentId === comment.msg_id}

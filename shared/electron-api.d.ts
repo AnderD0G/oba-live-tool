@@ -1,8 +1,12 @@
 import type { LogMessage } from 'electron-log'
 import type { ProgressInfo, UpdateDownloadedEvent } from 'electron-updater'
+import type { CodexDraftRequest, CodexDraftResult, CodexStatus } from './codexDraft'
 import { IPC_CHANNELS } from './ipcChannels'
 
 export interface IpcChannels {
+  [IPC_CHANNELS.codexDraft.status]: () => Promise<CodexStatus>
+  [IPC_CHANNELS.codexDraft.generate]: (request: CodexDraftRequest) => Promise<CodexDraftResult>
+  [IPC_CHANNELS.codexDraft.cancel]: (requestId: string) => boolean
   // LiveControl
   [IPC_CHANNELS.tasks.liveControl.connect]: (params: {
     chromePath?: string

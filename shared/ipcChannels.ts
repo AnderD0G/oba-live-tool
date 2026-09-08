@@ -1,4 +1,9 @@
 export const IPC_CHANNELS = {
+  codexDraft: {
+    status: 'codexDraft:status',
+    generate: 'codexDraft:generate',
+    cancel: 'codexDraft:cancel',
+  },
   tasks: {
     liveControl: {
       connect: 'tasks:liveControl:connect',

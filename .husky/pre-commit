@@ -1,1 +1,1 @@
-pnpm exec lint-staged --concurrent false
+node node_modules/lint-staged/bin/lint-staged.js --concurrent false

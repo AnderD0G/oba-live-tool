@@ -1,0 +1,8 @@
+packages:
+  - '.'
+allowBuilds:
+  electron: true
+  esbuild: true
+  electron-winstaller: false
+overrides:
+  '@electron/node-gyp': 10.2.0-electron.2

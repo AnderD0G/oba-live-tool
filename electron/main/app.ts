@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { IPC_CHANNELS } from 'shared/ipcChannels'
 import { emitter } from './event/eventBus'
-import { updateManager } from './managers/UpdateManager'
 import { providerService } from './services/ProviderService'
 import windowManager from './windowManager'
 import './ipc'
@@ -70,7 +69,8 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, 'public')
   : RENDERER_DIST
 
-app.commandLine.appendSwitch('remote-debugging-port', '9222')
+if (process.env.OBA_DEBUG_PORT)
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.OBA_DEBUG_PORT)
 
 // Disable GPU Acceleration for Windows 7
 if (os.release().startsWith('6.1')) app.disableHardwareAcceleration()
@@ -89,7 +89,7 @@ const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
 async function createWindow() {
   win = new BrowserWindow({
-    title: `OBA 直播工具 - v${app.getVersion()}`,
+    title: `OBA Codex 评论草稿 - v${app.getVersion()}`,
     width: 1280,
     height: 800,
     autoHideMenuBar: app.isPackaged,
@@ -117,9 +117,7 @@ async function createWindow() {
   }
 
   // 加载完成后检查更新
-  win.webContents.on('did-finish-load', async () => {
-    await updateManager.silentCheckForUpdate()
-  })
+  // Local fork updates are built from this branch, not replaced by upstream binaries.
 
   // Make all links open with the browser, not with the application
   win.webContents.setWindowOpenHandler(({ url }) => {

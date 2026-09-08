@@ -3,6 +3,7 @@ import { setupAppIpcHandlers } from './app'
 import { setupAutoMessageIpcHandlers } from './autoMessage'
 import { setupAutoPopUpIpcHandlers } from './autoPopUp'
 import { setupBrowserIpcHandlers } from './browser'
+import { setupCodexDraftIpcHandlers } from './codexDraft'
 import { setupAutoReplyIpcHandlers } from './commentListener'
 import { setupLiveControlIpcHandlers } from './connection'
 import { setupPinCommentIpcHandler } from './pinComment'
@@ -11,6 +12,7 @@ import { setupUpdateIpcHandlers } from './update'
 
 setupLiveControlIpcHandlers()
 setupAIChatIpcHandlers()
+setupCodexDraftIpcHandlers()
 setupAutoPopUpIpcHandlers()
 setupAutoReplyIpcHandlers()
 setupAutoMessageIpcHandlers()

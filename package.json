@@ -1,7 +1,8 @@
 {
-  "name": "oba-live-tool",
+  "name": "oba-live-tool-codex",
+  "productName": "OBA-Codex",
   "type": "module",
-  "version": "1.6.1",
+  "version": "1.6.1-codex.1",
   "private": true,
   "description": "直播工具，用于直播带货，能自动弹窗，自动发言",
   "author": "qiutongxue",
@@ -18,6 +19,9 @@
     "preview": "vite preview",
     "pretest": "vite build --mode=test",
     "test": "vitest run",
+    "test:codex": "tsx --test tests/codexDraft.test.ts",
+    "test:codex-live": "tsx scripts/test-codex-live.ts",
+    "build:local": "tsc && vite build && electron-builder --win --dir --publish never",
     "prepare": "husky",
     "bump": "bumpp --no-commit --no-tag --no-push && changelogen --output",
     "release": "node ./scripts/release",
@@ -104,11 +108,6 @@
   "lint-staged": {
     "*": [
       "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true"
-    ]
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron"
     ]
   }
 }
