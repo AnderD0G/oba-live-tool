@@ -2,7 +2,7 @@
 import type { BrowserWindow } from 'electron'
 import type { IpcChannels } from 'shared/electron-api'
 
-class WindowManager {
+export class WindowManager {
   private mainWindow?: BrowserWindow
 
   setMainWindow(win: BrowserWindow) {
@@ -18,7 +18,11 @@ class WindowManager {
     channel: Channel,
     ...args: Parameters<IpcChannels[Channel]>
   ): boolean {
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+    if (
+      this.mainWindow &&
+      !this.mainWindow.isDestroyed() &&
+      !this.mainWindow.webContents.isDestroyed()
+    ) {
       this.mainWindow.webContents.send(channel, ...args)
       return true
     }

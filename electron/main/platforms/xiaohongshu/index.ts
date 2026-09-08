@@ -14,6 +14,7 @@ import type { ICommentListener, IPerformComment, IPerformPopup, IPlatform } from
 import { XiaohongshuCommentListener } from './commentListener'
 import { REGEXPS, SELECTORS, TEXTS, URLS } from './constant'
 import { xiaohongshuElementFinder as elementFinder } from './elment-finder'
+import { isConfirmedSendReceipt } from './sendReceipt'
 
 const PLATFORM_NAME = '小红书' as const
 
@@ -114,12 +115,7 @@ export class XiaohongshuPlatform
     const result = await response
     if (!result?.ok()) return false
     const body = await result.json().catch(() => null)
-    return (
-      body?.success === true &&
-      body?.data?.comment === message &&
-      (body.data.common_response?.common_result === undefined ||
-        body.data.common_response.common_result === 0)
-    )
+    return isConfirmedSendReceipt(body, message)
   }
 
   async startCommentListener(onComment: (comment: LiveMessage) => void): Promise<void> {

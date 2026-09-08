@@ -1,4 +1,5 @@
 import type { CDPSession, Page, Response } from 'playwright'
+import { createLogger } from '#/logger'
 
 interface WebSocketFrameReceivedEvent {
   requestId: string
@@ -127,6 +128,16 @@ export class XiaohongshuCommentListener {
     const url = response.url()
     if (!url.includes('send_comment')) return
     const respJson = (await response.json()) as XiaohongshuSendCommentResponse
+    createLogger('千帆发送回执').info(
+      JSON.stringify({
+        httpStatus: response.status(),
+        method: response.request().method(),
+        success: respJson.success,
+        code: respJson.code,
+        commonResult: respJson.data?.common_response?.common_result,
+        commentLength: respJson.data?.comment?.length,
+      }),
+    )
     if (respJson.success) {
       const data = respJson.data
       const liveMessage: LiveMessage = {
