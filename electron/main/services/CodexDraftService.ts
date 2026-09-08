@@ -79,7 +79,7 @@ export function buildArgs(directory: string, model?: string): string[] {
   return args
 }
 
-async function findCodex(): Promise<string> {
+export async function findCodex(): Promise<string> {
   const exe = process.platform === 'win32' ? 'codex.exe' : 'codex'
   const candidates = (process.env.PATH ?? '')
     .split(path.delimiter)

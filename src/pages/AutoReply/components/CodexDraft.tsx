@@ -50,6 +50,7 @@ function DraftEditor({
   const [elapsed, setElapsed] = useState(0)
   const [progress, setProgress] = useState('')
   const [hasDraft, setHasDraft] = useState(false)
+  const [timing, setTiming] = useState('')
   const active = useRef<string | null>(null)
   const { instructions, model } = useDraftPreferences()
   const inputId = useId()
@@ -58,7 +59,13 @@ function DraftEditor({
   useEffect(
     () =>
       window.ipcRenderer.on(IPC_CHANNELS.codexDraft.progress, event => {
-        if (event.requestId === active.current) setProgress(event.message)
+        if (event.requestId === active.current) {
+          setProgress(event.message)
+          if (event.text !== undefined) {
+            setDraft(event.text)
+            setHasDraft(true)
+          }
+        }
       }),
     [],
   )
@@ -91,6 +98,7 @@ function DraftEditor({
     setDraft('')
     setHasDraft(false)
     setElapsed(0)
+    setTiming('')
     setProgress('正在启动 Codex…')
     try {
       const result = await window.ipcRenderer.invoke(IPC_CHANNELS.codexDraft.generate, {
@@ -103,9 +111,21 @@ function DraftEditor({
       if (result.ok) {
         setDraft(result.text)
         setHasDraft(true)
-      } else setError(result.error)
+        if (result.elapsedMs !== undefined)
+          setTiming(
+            `${result.firstTextMs !== undefined ? `首字 ${(result.firstTextMs / 1000).toFixed(1)} 秒 · ` : ''}完成 ${(result.elapsedMs / 1000).toFixed(1)} 秒`,
+          )
+      } else {
+        setError(result.error)
+        setDraft('')
+        setHasDraft(false)
+      }
     } catch {
-      if (active.current === requestId) setError('无法连接生成服务，请重启工具后重试')
+      if (active.current === requestId) {
+        setError('无法连接生成服务，请重启工具后重试')
+        setDraft('')
+        setHasDraft(false)
+      }
     } finally {
       if (active.current === requestId) {
         active.current = null
@@ -157,10 +177,11 @@ function DraftEditor({
       )}
       {hasDraft && (
         <div className="space-y-2" aria-live="polite">
-          <Label htmlFor={draftId}>回复草稿 · 可编辑</Label>
+          <Label htmlFor={draftId}>{busy ? '回复正在生成…' : '回复草稿 · 可编辑'}</Label>
           <Textarea
             id={draftId}
             value={draft}
+            readOnly={busy}
             onChange={event => {
               setDraft(event.target.value)
               setCopied(false)
@@ -169,7 +190,7 @@ function DraftEditor({
           />
           <Button
             variant="outline"
-            disabled={!draft.trim()}
+            disabled={busy || !draft.trim()}
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(draft)
@@ -184,6 +205,7 @@ function DraftEditor({
           </Button>
         </div>
       )}
+      {timing && <p className="text-xs text-muted-foreground">{timing}</p>}
       <p className="text-xs text-muted-foreground">
         点击生成会将这条评论和回复要求交给已登录的 Codex，使用账号额度。草稿不会自动发到直播间。
       </p>
@@ -249,9 +271,9 @@ export function CodexDraftSettings() {
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span role="status">
             {checking
-              ? '正在检测 CLI…'
+              ? '正在连接常驻 CLI…'
               : status?.available
-                ? `已找到 ${status.version}`
+                ? `Codex 常驻服务已就绪${status.pid ? ` · PID ${status.pid}` : ''}`
                 : status?.error}
           </span>
           <Button variant="outline" size="sm" onClick={check} disabled={checking}>

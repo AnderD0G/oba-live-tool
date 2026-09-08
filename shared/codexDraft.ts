@@ -5,7 +5,13 @@ export interface CodexDraftRequest {
   model?: string
 }
 
-export type CodexDraftResult = { ok: true; text: string } | { ok: false; error: string }
+export interface CodexDraftProgress {
+  message: string
+  text?: string
+}
+export type CodexDraftResult =
+  | { ok: true; text: string; elapsedMs?: number; firstTextMs?: number }
+  | { ok: false; error: string }
 export type CodexStatus =
-  | { available: true; path: string; version: string }
+  | { available: true; path: string; version: string; pid?: number }
   | { available: false; error: string }

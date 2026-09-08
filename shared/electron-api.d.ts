@@ -7,7 +7,11 @@ export interface IpcChannels {
   [IPC_CHANNELS.codexDraft.status]: () => Promise<CodexStatus>
   [IPC_CHANNELS.codexDraft.generate]: (request: CodexDraftRequest) => Promise<CodexDraftResult>
   [IPC_CHANNELS.codexDraft.cancel]: (requestId: string) => boolean
-  [IPC_CHANNELS.codexDraft.progress]: (event: { requestId: string; message: string }) => void
+  [IPC_CHANNELS.codexDraft.progress]: (event: {
+    requestId: string
+    message: string
+    text?: string
+  }) => void
   // LiveControl
   [IPC_CHANNELS.tasks.liveControl.connect]: (params: {
     chromePath?: string
