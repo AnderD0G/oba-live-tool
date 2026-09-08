@@ -47,10 +47,27 @@ function DraftEditor({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const [progress, setProgress] = useState('')
+  const [hasDraft, setHasDraft] = useState(false)
   const active = useRef<string | null>(null)
   const { instructions, model } = useDraftPreferences()
   const inputId = useId()
   const draftId = useId()
+
+  useEffect(
+    () =>
+      window.ipcRenderer.on(IPC_CHANNELS.codexDraft.progress, event => {
+        if (event.requestId === active.current) setProgress(event.message)
+      }),
+    [],
+  )
+  useEffect(() => {
+    if (!busy) return
+    const started = Date.now()
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [busy])
 
   useEffect(
     () => () => {
@@ -72,6 +89,9 @@ function DraftEditor({
     setError('')
     setCopied(false)
     setDraft('')
+    setHasDraft(false)
+    setElapsed(0)
+    setProgress('正在启动 Codex…')
     try {
       const result = await window.ipcRenderer.invoke(IPC_CHANNELS.codexDraft.generate, {
         requestId,
@@ -80,8 +100,10 @@ function DraftEditor({
         model: model.trim() || undefined,
       })
       if (active.current !== requestId) return
-      if (result.ok) setDraft(result.text)
-      else setError(result.error)
+      if (result.ok) {
+        setDraft(result.text)
+        setHasDraft(true)
+      } else setError(result.error)
     } catch {
       if (active.current === requestId) setError('无法连接生成服务，请重启工具后重试')
     } finally {
@@ -128,7 +150,12 @@ function DraftEditor({
           {error}
         </p>
       )}
-      {draft && (
+      {busy && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {progress} 已等待 {elapsed} 秒。{elapsed >= 20 ? '可取消后重试，最多等待 120 秒。' : ''}
+        </p>
+      )}
+      {hasDraft && (
         <div className="space-y-2" aria-live="polite">
           <Label htmlFor={draftId}>回复草稿 · 可编辑</Label>
           <Textarea

@@ -34,6 +34,7 @@ export function buildArgs(directory: string, model?: string): string[] {
     'exec',
     '--ignore-user-config',
     '--ephemeral',
+    '--json',
     '--skip-git-repo-check',
     '--sandbox',
     'read-only',
@@ -102,6 +103,11 @@ async function findCodex(): Promise<string> {
 }
 
 export class CodexDraftService {
+  constructor(
+    private readonly resolveEnvironment: () => Promise<NodeJS.ProcessEnv> = async () => ({
+      ...process.env,
+    }),
+  ) {}
   private active?: {
     id: string
     owner: number
@@ -140,7 +146,11 @@ export class CodexDraftService {
     return true
   }
 
-  async generate(owner: number, request: CodexDraftRequest): Promise<CodexDraftResult> {
+  async generate(
+    owner: number,
+    request: CodexDraftRequest,
+    progress: (message: string) => void = () => {},
+  ): Promise<CodexDraftResult> {
     try {
       validateRequest(request)
     } catch (error) {
@@ -156,7 +166,9 @@ export class CodexDraftService {
     this.active = job
     let directory: string | undefined
     try {
+      progress('正在启动 Codex…')
       const executable = await findCodex()
+      const environment = await this.resolveEnvironment()
       directory = await mkdtemp(path.join(os.tmpdir(), 'oba-codex-'))
       // A private, empty working directory avoids loading project instructions.
       await writeFile(path.join(directory, '.gitignore'), '*\n')
@@ -168,6 +180,7 @@ export class CodexDraftService {
           shell: false,
           windowsHide: true,
           stdio: 'pipe',
+          env: environment,
         })
         job.child = child
         let stderr = ''
@@ -176,9 +189,29 @@ export class CodexDraftService {
           timedOut = true
           child.kill()
         }, 120000)
-        child.stdout.resume()
+        let pendingLine = ''
+        child.stdout.on('data', chunk => {
+          pendingLine += chunk.toString('utf8')
+          const lines = pendingLine.split('\n')
+          pendingLine = (lines.pop() ?? '').slice(-64000)
+          for (const line of lines) {
+            try {
+              const event = JSON.parse(line)
+              if (event.type === 'turn.started') progress('已连接 CLI，正在等待模型回复…')
+              if (event.type === 'error' && /reconnect|retry|timed out/i.test(event.message ?? ''))
+                progress('网络连接不稳定，Codex 正在重试…')
+              if (event.type === 'item.completed' && event.item?.type === 'agent_message')
+                progress('已收到回复，正在整理草稿…')
+            } catch {
+              /* Ignore non-JSON diagnostics. */
+            }
+          }
+        })
         child.stderr.on('data', chunk => {
-          stderr = (stderr + chunk.toString()).slice(-12000)
+          const text = chunk.toString()
+          stderr = (stderr + text).slice(-12000)
+          if (/stream disconnected|retrying sampling|request timed out/i.test(text))
+            progress('网络连接不稳定，Codex 正在重试…')
         })
         child.stdin.on('error', () => {
           /* close/error handles a CLI that exits before consuming input */

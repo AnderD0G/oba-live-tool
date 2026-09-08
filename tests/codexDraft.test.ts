@@ -7,12 +7,32 @@ import {
   CodexDraftService,
   validateRequest,
 } from '../electron/main/services/CodexDraftService'
+import { codexProxyEnvironment } from '../electron/main/services/codexProxy'
 
 const request = {
   requestId: 'test-1',
   comment: '画面怎么传到电脑？',
   instructions: '手机用 Moblin，电脑用 OBS。请简短回复。',
 }
+
+test('inherits the OS proxy only for the child, respecting explicit proxy environment', () => {
+  const base = { PATH: 'test-path' }
+  assert.equal(
+    codexProxyEnvironment('PROXY 127.0.0.1:7897', base).HTTPS_PROXY,
+    'http://127.0.0.1:7897',
+  )
+  assert.deepEqual(base, { PATH: 'test-path' })
+  assert.deepEqual(codexProxyEnvironment('DIRECT', base), base)
+  assert.equal(
+    codexProxyEnvironment('SOCKS5 localhost:1080', base).HTTPS_PROXY,
+    'socks5h://localhost:1080',
+  )
+  assert.equal(
+    codexProxyEnvironment('PROXY localhost:7897', { HTTPS_PROXY: 'http://existing:80' })
+      .HTTPS_PROXY,
+    'http://existing:80',
+  )
+})
 
 test('rejects empty, oversized and malformed renderer input', () => {
   for (const data of [

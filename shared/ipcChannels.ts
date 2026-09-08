@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
     status: 'codexDraft:status',
     generate: 'codexDraft:generate',
     cancel: 'codexDraft:cancel',
+    progress: 'codexDraft:progress',
   },
   tasks: {
     liveControl: {
