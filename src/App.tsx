@@ -22,11 +22,20 @@ import { useAutoMessageStore } from './hooks/useAutoMessage'
 import { useAutoPopUpStore } from './hooks/useAutoPopUp'
 import { useAutoReply, useAutoReplyStore } from './hooks/useAutoReply'
 import { useChromeConfigStore } from './hooks/useChromeConfig'
+import { useCodexAutoStore } from './hooks/useCodexAutoReply'
 import { useLiveControlStore } from './hooks/useLiveControl'
 import { useToast } from './hooks/useToast'
 import { useUpdateConfigStore, useUpdateStore } from './hooks/useUpdate'
 
 function useGlobalIpcListener() {
+  useIpcListener(IPC_CHANNELS.codexAuto.changed, state =>
+    useCodexAutoStore.getState().update(state),
+  )
+  useEffect(() => {
+    void window.ipcRenderer
+      .invoke(IPC_CHANNELS.codexAuto.state)
+      .then(state => useCodexAutoStore.getState().update(state))
+  }, [])
   const { handleComment } = useAutoReply()
   const { setIsListening } = useAutoReplyStore()
   const { setIsConnected, setAccountName } = useLiveControlStore()
@@ -82,6 +91,13 @@ function App() {
   const { accounts, currentAccountId } = useAccounts()
 
   useEffect(() => {
+    const auto = useCodexAutoStore.getState().state
+    if (auto.enabled && auto.accountId && auto.accountId !== currentAccountId)
+      void window.ipcRenderer.invoke(IPC_CHANNELS.codexAuto.configure, {
+        accountId: auto.accountId,
+        enabled: false,
+        instructions: '',
+      })
     const account = accounts.find(acc => acc.id === currentAccountId)
     if (account) {
       window.ipcRenderer.invoke(IPC_CHANNELS.account.switch, { account })

@@ -1,9 +1,15 @@
 import type { LogMessage } from 'electron-log'
 import type { ProgressInfo, UpdateDownloadedEvent } from 'electron-updater'
+import type { CodexAutoSettings, CodexAutoState } from './codexAutoReply'
 import type { CodexDraftRequest, CodexDraftResult, CodexStatus } from './codexDraft'
 import { IPC_CHANNELS } from './ipcChannels'
 
 export interface IpcChannels {
+  [IPC_CHANNELS.codexAuto.configure]: (
+    settings: CodexAutoSettings,
+  ) => Promise<{ ok: boolean; error?: string }>
+  [IPC_CHANNELS.codexAuto.state]: () => CodexAutoState
+  [IPC_CHANNELS.codexAuto.changed]: (state: CodexAutoState) => void
   [IPC_CHANNELS.codexDraft.status]: () => Promise<CodexStatus>
   [IPC_CHANNELS.codexDraft.generate]: (request: CodexDraftRequest) => Promise<CodexDraftResult>
   [IPC_CHANNELS.codexDraft.cancel]: (requestId: string) => boolean

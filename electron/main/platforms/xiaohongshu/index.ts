@@ -60,6 +60,7 @@ export class XiaohongshuPlatform
 
   async getAccountName(session: BrowserSession) {
     const accountName = await getAccountName(session.page, SELECTORS.ACCOUNT_NAME)
+    this.accountName = accountName ?? ''
     if (accountName?.endsWith('的店')) {
       this.accountName = accountName.slice(0, -2)
     }
@@ -85,6 +86,39 @@ export class XiaohongshuPlatform
     return Result.pipe(
       ensurePage(this.mainPage),
       Result.andThen(page => comment(page, elementFinder, message, false)),
+    )
+  }
+
+  async performConfirmedComment(message: string, signal: AbortSignal): Promise<boolean> {
+    const page = this.mainPage
+    if (!page || page.isClosed() || signal.aborted) return false
+    const found = await elementFinder.getCommentTextarea(page)
+    if (Result.isFailure(found)) return false
+    const input = found.value
+    // Do not overwrite text the host is currently composing in Qianfan.
+    if ((await input.inputValue()).trim())
+      throw new Error('千帆输入框已有内容，请先处理后再开启自动回复')
+    await input.fill(message, { timeout: 5000 })
+    const button = await elementFinder.getClickableSubmitCommentButton(page)
+    if (signal.aborted || Result.isFailure(button)) {
+      if ((await input.inputValue()) === message) await input.fill('')
+      return false
+    }
+    const response = page
+      .waitForResponse(r => r.url().includes('send_comment') && r.request().method() === 'POST', {
+        timeout: 10000,
+      })
+      .catch(() => null)
+    if (signal.aborted) return false
+    await button.value.dispatchEvent('click')
+    const result = await response
+    if (!result?.ok()) return false
+    const body = await result.json().catch(() => null)
+    return (
+      body?.success === true &&
+      body?.data?.comment === message &&
+      (body.data.common_response?.common_result === undefined ||
+        body.data.common_response.common_result === 0)
     )
   }
 

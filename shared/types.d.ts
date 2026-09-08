@@ -174,6 +174,7 @@ declare type WechatChannelLiveMessage = {
 }
 
 declare type XiaohongshuCommentLiveMessage = {
+  is_self?: boolean
   msg_type: 'xiaohongshu_comment'
   msg_id: string
   nick_name: string

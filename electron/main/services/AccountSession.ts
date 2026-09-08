@@ -29,6 +29,7 @@ export class AccountSession {
   private platform: IPlatform
   private browserSession: BrowserSession | null = null
   private activeTasks: Map<LiveControlTask['type'], ITask> = new Map()
+  private liveAccountName = ''
 
   constructor(
     platformName: LiveControlPlatform,
@@ -59,6 +60,7 @@ export class AccountSession {
     this.platform
       .getAccountName(this.browserSession)
       .then(accountName => {
+        this.liveAccountName = accountName ?? ''
         windowManager.send(IPC_CHANNELS.tasks.liveControl.notifyAccountName, {
           ok: true,
           accountId: this.account.id,
@@ -83,6 +85,7 @@ export class AccountSession {
   }
 
   disconnect() {
+    emitter.emit('comment-listener-stopped', { accountId: this.account.id })
     this.logger.warn('与中控台断开连接')
     // 通过程序关闭浏览器（并非多余的操作，因为 MacOS 的 context 关闭时不会关闭浏览器进程）
     this.browserSession?.browser.close().catch(e => this.logger.error('无法关闭浏览器：', e))
@@ -143,9 +146,35 @@ export class AccountSession {
     }
   }
 
+  public codexAutoReady() {
+    return (
+      !!this.browserSession &&
+      !this.browserSession.page.isClosed() &&
+      this.activeTasks.get('comment-listener')?.isRunning() === true &&
+      'performConfirmedComment' in this.platform
+    )
+  }
+
+  public getLiveAccountName() {
+    return this.liveAccountName
+  }
+
+  public async sendCodexReply(message: string, signal: AbortSignal): Promise<boolean> {
+    if (!this.codexAutoReady() || signal.aborted) return false
+    const platform = this.platform as IPlatform & {
+      performConfirmedComment: (text: string, signal: AbortSignal) => Promise<boolean>
+    }
+    return platform.performConfirmedComment(message, signal)
+  }
+
   public async sendRedPacket(duration: string): Result.ResultAsync<void, Error> {
     if (!isSendRedPacket(this.platform)) {
-      return Result.fail(new TaskNotSupportedError({ taskName: '一键发红包', targetName: this.platform.platformName }))
+      return Result.fail(
+        new TaskNotSupportedError({
+          taskName: '一键发红包',
+          targetName: this.platform.platformName,
+        }),
+      )
     }
     return this.platform.sendRedPacket(duration)
   }

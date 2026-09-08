@@ -19,7 +19,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useAccounts } from '@/hooks/useAccounts'
 
-const useDraftPreferences = create<{
+export const useDraftPreferences = create<{
   instructions: string
   model: string
   update: (settings: { instructions?: string; model?: string }) => void

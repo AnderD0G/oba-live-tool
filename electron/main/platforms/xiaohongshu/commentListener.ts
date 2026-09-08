@@ -132,6 +132,7 @@ export class XiaohongshuCommentListener {
       const liveMessage: LiveMessage = {
         msg_type: 'xiaohongshu_comment',
         msg_id: crypto.randomUUID(), // 主动发送的没有 commentId
+        is_self: true,
         nick_name: this.accountName ?? '',
         user_id: data.profile.user_id,
         content: data.comment,

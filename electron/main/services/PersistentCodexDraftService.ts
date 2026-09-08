@@ -68,6 +68,9 @@ interface Job {
 }
 
 export class PersistentCodexDraftService {
+  get isBusy() {
+    return !!this.active
+  }
   private runtime?: Runtime
   private starting?: Promise<Runtime>
   private active?: Job

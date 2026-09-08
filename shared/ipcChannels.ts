@@ -1,4 +1,9 @@
 export const IPC_CHANNELS = {
+  codexAuto: {
+    configure: 'codexAuto:configure',
+    state: 'codexAuto:state',
+    changed: 'codexAuto:changed',
+  },
   codexDraft: {
     status: 'codexDraft:status',
     generate: 'codexDraft:generate',

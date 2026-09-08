@@ -15,6 +15,7 @@ import { useAutoReplyConfig } from '@/hooks/useAutoReplyConfig'
 import { useCurrentLiveControl } from '@/hooks/useLiveControl'
 import { useToast } from '@/hooks/useToast'
 import { cn } from '@/lib/utils'
+import { CodexAutoToggle } from './CodexAutoReply'
 import { CodexDraftButton } from './CodexDraft'
 
 const getMessageColor = (type: Message['msg_type']) => {
@@ -258,6 +259,7 @@ export default function CommentList({
             </>
           )}
         </div>
+        <CodexAutoToggle listening={isListening === 'listening'} />
       </CardHeader>
       <Separator />
       <CardContent className="p-0">

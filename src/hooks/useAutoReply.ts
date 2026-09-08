@@ -10,6 +10,7 @@ import { useAccounts } from './useAccounts'
 import type { ChatMessage } from './useAIChat'
 import { type AIProvider, useAIProvider } from './useAIProvider'
 import { type AutoReplyConfig, useAutoReplyConfig } from './useAutoReplyConfig'
+import { useCodexAutoStore } from './useCodexAutoReply'
 import { useErrorHandler } from './useErrorHandler'
 import { useCurrentLiveControl } from './useLiveControl'
 
@@ -350,6 +351,8 @@ export function useAutoReply() {
     const { isRunning, comments: allComments, replies: allReplies } = currentContext
 
     store.addComment(accountId, comment)
+    const codexAuto = useCodexAutoStore.getState().state
+    if (codexAuto.enabled && codexAuto.accountId === accountId) return
     if (!isRunning) {
       return
     }

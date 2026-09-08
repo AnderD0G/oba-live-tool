@@ -1,5 +1,6 @@
 import { Result } from '@praha/byethrow'
 import { IPC_CHANNELS } from 'shared/ipcChannels'
+import { emitter } from '#/event/eventBus'
 import type { ScopedLogger } from '#/logger'
 import type { ICommentListener } from '#/platforms/IPlatform'
 import { WebSocketService } from '#/services/WebSocketService'
@@ -42,6 +43,7 @@ export function createCommentListenerTask(
       ...message,
       time: Date.now(),
     }
+    emitter.emit('live-comment', { accountId: account.id, comment })
     windowManager.send(IPC_CHANNELS.tasks.autoReply.showComment, {
       accountId: account.id,
       comment: comment,
@@ -80,6 +82,7 @@ export function createCommentListenerTask(
         await execute()
       },
       onStop: () => {
+        emitter.emit('comment-listener-stopped', { accountId: account.id })
         platform.stopCommentListener()
         wsService?.stop()
         wsService = null

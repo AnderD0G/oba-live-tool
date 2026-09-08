@@ -6,6 +6,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useAccounts } from '@/hooks/useAccounts'
 import { type MessageOf, useAutoReply } from '@/hooks/useAutoReply'
+import { useCodexAutoStore } from '@/hooks/useCodexAutoReply'
+import { CodexAutoHistory } from './CodexAutoReply'
 
 export default function PreviewList({
   setHighLight,
@@ -14,6 +16,9 @@ export default function PreviewList({
 }) {
   const { replies, comments } = useAutoReply()
   const { currentAccountId } = useAccounts()
+  const hasCodexReplies = useCodexAutoStore(s =>
+    s.state.records.some(r => r.accountId === currentAccountId),
+  )
   const handleSendReply = async (replyContent: string, _commentId: string) => {
     try {
       await window.ipcRenderer.invoke(
@@ -37,7 +42,8 @@ export default function PreviewList({
       <CardContent>
         <ScrollArea className="py-2 h-[400px]">
           <div className="space-y-1">
-            {replies.length === 0 ? (
+            <CodexAutoHistory />
+            {replies.length === 0 && !hasCodexReplies ? (
               <div className="text-center text-muted-foreground py-8">暂无回复数据</div>
             ) : (
               replies.map(reply => {
