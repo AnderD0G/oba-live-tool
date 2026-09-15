@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from 'shared/ipcChannels'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useAccounts } from '@/hooks/useAccounts'
@@ -54,6 +55,18 @@ const StatusAlert = React.memo(() => {
       </Alert>
     )
   }
+  if (platform === 'tiktok') {
+    return (
+      <Alert>
+        <CircleAlert className="h-4 w-4" />
+        <AlertTitle>TikTok LIVE 第一版测试</AlertTitle>
+        <AlertDescription>
+          先填写正在直播的主播账号。连接时会打开 TikTok 登录页；登录一次后，OBA
+          会保存这台电脑的登录状态。
+        </AlertDescription>
+      </Alert>
+    )
+  }
   return null
 })
 
@@ -73,6 +86,7 @@ const StatusCard = React.memo(() => {
               <ConnectToLiveControl />
             </div>
           </div>
+          <TikTokSetting />
           <StatusAlert />
           <Separator />
           <HeadlessSetting />
@@ -88,6 +102,7 @@ const ConnectToLiveControl = React.memo(() => {
   const isConnected = useCurrentLiveControl(context => context.isConnected)
   const chromePath = useCurrentChromeConfig(context => context.path)
   const storageState = useCurrentChromeConfig(context => context.storageState)
+  const tiktokUsername = useCurrentLiveControl(context => context.tiktokUsername)
   let headless = useCurrentChromeConfig(context => context.headless)
   const account = useAccounts(store => store.getCurrentAccount())
 
@@ -103,6 +118,10 @@ const ConnectToLiveControl = React.memo(() => {
         toast.error('找不到对应账号')
         return
       }
+      if (platform === 'tiktok' && !tiktokUsername.trim()) {
+        toast.error('请先填写 TikTok 主播账号')
+        return
+      }
       setIsConnected('connecting')
       const result = await window.ipcRenderer.invoke(IPC_CHANNELS.tasks.liveControl.connect, {
         headless,
@@ -110,6 +129,12 @@ const ConnectToLiveControl = React.memo(() => {
         storageState,
         platform,
         account,
+        platformConfig:
+          platform === 'tiktok'
+            ? {
+                tiktokUsername,
+              }
+            : undefined,
       })
 
       if (result) {
@@ -151,6 +176,29 @@ const ConnectToLiveControl = React.memo(() => {
     <DisconnectButton handleButtonClick={handleButtonClick} />
   ) : (
     <ConnectButton isLoading={isConnected === 'connecting'} handleButtonClick={handleButtonClick} />
+  )
+})
+
+const TikTokSetting = React.memo(() => {
+  const platform = useCurrentLiveControl(context => context.platform)
+  const username = useCurrentLiveControl(context => context.tiktokUsername)
+  const isConnected = useCurrentLiveControl(context => context.isConnected)
+  const { setTikTokUsername } = useCurrentLiveControlActions()
+  if (platform !== 'tiktok') return null
+
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-medium">TikTok 主播账号</div>
+      <Input
+        value={username}
+        disabled={isConnected !== 'disconnected'}
+        onChange={event => setTikTokUsername(event.target.value)}
+        placeholder="例如 @yourname，也可以粘贴直播间网址"
+      />
+      <p className="text-xs text-muted-foreground">
+        填写正在开播的账号；监听时只接收点击“开始监听”之后的新弹幕。
+      </p>
+    </div>
   )
 })
 

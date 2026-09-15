@@ -293,8 +293,13 @@ const handleAIReply = async (
   // 筛选与该用户相关的评论和回复
   const userComments = [comment, ...allComments].filter(
     cmt =>
-      (cmt.msg_type === 'comment' || cmt.msg_type === 'wechat_channel_live_msg') &&
-      cmt.nick_name === comment.nick_name,
+      [
+        'comment',
+        'wechat_channel_live_msg',
+        'xiaohongshu_comment',
+        'taobao_comment',
+        'tiktok_comment',
+      ].includes(cmt.msg_type) && cmt.nick_name === comment.nick_name,
   ) as CommentMessage[]
   const userReplies = allReplies.filter(reply => reply.replyFor === comment.nick_name)
 
@@ -369,6 +374,7 @@ export function useAutoReply() {
       switch (comment.msg_type) {
         case 'taobao_comment':
         case 'xiaohongshu_comment':
+        case 'tiktok_comment':
         case 'wechat_channel_live_msg':
         case 'comment': {
           // 优先尝试关键字回复

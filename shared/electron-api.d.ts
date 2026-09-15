@@ -32,6 +32,7 @@ export interface IpcChannels {
     storageState?: string
     platform: LiveControlPlatform
     account: Account
+    platformConfig?: LivePlatformConfig
   }) => boolean
   [IPC_CHANNELS.tasks.liveControl.disconnect]: (accountId: string) => boolean
   [IPC_CHANNELS.tasks.liveControl.disconnectedEvent]: (id: string) => void

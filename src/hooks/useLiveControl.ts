@@ -11,12 +11,14 @@ interface LiveControlContext {
   isConnected: ConnectionStatus
   accountName: string | null
   platform: LiveControlPlatform
+  tiktokUsername: string
 }
 
 interface LiveControlActions {
   setIsConnected: (accountId: string, connected: ConnectionStatus) => void
   setAccountName: (accountId: string, name: string | null) => void
   setPlatform: (accountId: string, platform: LiveControlPlatform) => void
+  setTikTokUsername: (accountId: string, username: string) => void
 }
 
 type LiveControlStore = LiveControlActions & {
@@ -28,6 +30,7 @@ function defaultContext(): LiveControlContext {
     isConnected: 'disconnected',
     accountName: null,
     platform: 'douyin',
+    tiktokUsername: '',
   }
 }
 
@@ -66,20 +69,28 @@ export const useLiveControlStore = create<LiveControlStore>()(
             const context = ensureContext(state, accountId)
             context.platform = platform
           }),
+        setTikTokUsername: (accountId, username) =>
+          set(state => {
+            const context = ensureContext(state, accountId)
+            context.tiktokUsername = username
+          }),
       }
     }),
     {
       name: 'live-control-storage',
       partialize: state => {
-        const contexts: Record<string, Pick<LiveControlContext, 'platform'>> = {}
+        const contexts: Record<string, Pick<LiveControlContext, 'platform' | 'tiktokUsername'>> = {}
         for (const key in state.contexts) {
-          contexts[key] = { platform: state.contexts[key].platform }
+          contexts[key] = {
+            platform: state.contexts[key].platform,
+            tiktokUsername: state.contexts[key].tiktokUsername,
+          }
         }
         return { contexts }
       },
       merge: (_persistedState, currentState) => {
         const persistedState = _persistedState as {
-          contexts: Record<string, Pick<LiveControlContext, 'platform'>>
+          contexts: Record<string, Pick<LiveControlContext, 'platform' | 'tiktokUsername'>>
         }
         const mergedContexts: Record<string, LiveControlContext> = {}
         for (const key in persistedState.contexts ?? {}) {
@@ -101,6 +112,7 @@ export const useCurrentLiveControlActions = () => {
   const setIsConnected = useLiveControlStore(state => state.setIsConnected)
   const setAccountName = useLiveControlStore(state => state.setAccountName)
   const setPlatform = useLiveControlStore(state => state.setPlatform)
+  const setTikTokUsername = useLiveControlStore(state => state.setTikTokUsername)
   const currentAccountId = useAccounts(state => state.currentAccountId)
   return useMemo(
     () => ({
@@ -113,8 +125,11 @@ export const useCurrentLiveControlActions = () => {
       setPlatform: (platform: LiveControlPlatform) => {
         setPlatform(currentAccountId, platform)
       },
+      setTikTokUsername: (username: string) => {
+        setTikTokUsername(currentAccountId, username)
+      },
     }),
-    [currentAccountId, setIsConnected, setAccountName, setPlatform],
+    [currentAccountId, setIsConnected, setAccountName, setPlatform, setTikTokUsername],
   )
 }
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.6.3-codex.11
+
+### Features
+
+- 新增 TikTok LIVE 第一版：主播账号配置、应用内登录、实时新弹幕监听。
+- TikTok 评论接入现有评论列表、弹幕捕手、40 × 30 mm 打印和 AI 回复流程。
+- 自动回复通过本机已登录的 TikTok 网页发送，登录凭证不传给弹幕连接服务。
+
+### Safety and diagnostics
+
+- 关闭 TikTok 初始历史消息处理，避免连接时重复捕获、回复或打印旧弹幕。
+- 保存 TikTok 主播账号并加入第三方组件来源与许可证说明。
+
 ## v1.6.3
 
 [compare changes](https://github.com/qiutongxue/oba-live-tool/compare/v1.6.1...v1.6.3)

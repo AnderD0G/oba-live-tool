@@ -12,6 +12,7 @@ import { platformFactory } from '#/platforms'
 import {
   type IPlatform,
   isCommentListener,
+  isConfigurablePlatform,
   isPerformComment,
   isPerformPopup,
   isPinComment,
@@ -34,9 +35,13 @@ export class AccountSession {
   constructor(
     platformName: LiveControlPlatform,
     private account: Account,
+    platformConfig?: LivePlatformConfig,
     private logger = createLogger(`@${account.name}`),
   ) {
     this.platform = new platformFactory[platformName]()
+    if (platformConfig && isConfigurablePlatform(this.platform)) {
+      this.platform.configure(platformConfig)
+    }
   }
 
   async connect(config: { headless?: boolean; storageState?: string }) {

@@ -76,3 +76,13 @@ export interface IPlatform {
 
   disconnect(): Promise<void>
 }
+
+export interface IConfigurablePlatform {
+  configure(config: LivePlatformConfig): void
+}
+
+export function isConfigurablePlatform(
+  platform: IPlatform,
+): platform is IPlatform & IConfigurablePlatform {
+  return 'configure' in platform && typeof platform.configure === 'function'
+}

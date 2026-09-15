@@ -9,12 +9,12 @@ const TASK_NAME = '中控台'
 function setupIpcHandlers() {
   typedIpcMainHandle(
     IPC_CHANNELS.tasks.liveControl.connect,
-    async (_, { chromePath, headless, storageState, platform, account }) => {
+    async (_, { chromePath, headless, storageState, platform, account, platformConfig }) => {
       try {
         if (chromePath) {
           browserManager.setChromePath(chromePath)
         }
-        const accountSession = accountManager.createSession(platform, account)
+        const accountSession = accountManager.createSession(platform, account, platformConfig)
         await accountSession.connect({
           headless,
           storageState,

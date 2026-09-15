@@ -67,7 +67,7 @@ export class CodexAutoReplyService {
 
   enable(settings: CodexAutoSettings) {
     if (this.state.enabled) throw new Error('请先关闭当前 Codex 自动回复')
-    if (!this.deps.ready(settings.accountId)) throw new Error('请先连接小红书千帆并开始监听')
+    if (!this.deps.ready(settings.accountId)) throw new Error('请先连接直播平台并开始监听')
     this.settings = { ...settings }
     this.epoch++
     this.state.enabled = true
@@ -110,7 +110,7 @@ export class CodexAutoReplyService {
     if (
       !this.state.enabled ||
       this.state.accountId !== accountId ||
-      comment.msg_type !== 'xiaohongshu_comment' ||
+      !['xiaohongshu_comment', 'tiktok_comment'].includes(comment.msg_type) ||
       !text
     )
       return

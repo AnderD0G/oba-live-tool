@@ -1,0 +1,10 @@
+TikTok LIVE experimental integration
+
+This build includes tiktok-live-connector 2.4.4.
+Project: https://github.com/zerodytrash/TikTok-Live-Connector
+License: GNU Affero General Public License v3.0 only (AGPL-3.0-only)
+Source: https://github.com/zerodytrash/TikTok-Live-Connector/tree/v2.4.4
+
+The connector is unofficial and unaffiliated with TikTok or ByteDance. OBA uses it only to
+receive live-room events. TikTok login cookies remain in the local Playwright browser profile;
+this build does not forward authenticated cookies to the connector's signing provider.

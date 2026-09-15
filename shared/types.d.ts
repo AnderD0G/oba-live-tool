@@ -19,7 +19,12 @@ declare type LiveControlPlatform =
   | 'wxchannel'
   | 'kuaishou'
   | 'taobao'
+  | 'tiktok'
   | 'dev'
+
+declare type LivePlatformConfig = {
+  tiktokUsername?: string
+}
 
 declare type GoodsItem = {
   id: number
@@ -73,7 +78,14 @@ declare type SendBatchMessagesTask = {
 }
 
 declare interface CommentListenerConfig {
-  source: 'compass' | 'control' | 'wechat-channel' | 'xiaohongshu' | 'taobao' | 'kuaishou'
+  source:
+    | 'compass'
+    | 'control'
+    | 'wechat-channel'
+    | 'xiaohongshu'
+    | 'taobao'
+    | 'kuaishou'
+    | 'tiktok'
   ws?: {
     port: number
   }
@@ -192,8 +204,19 @@ declare type TaobaoCommentLiveMessage = {
   time: number
 }
 
+declare type TikTokCommentLiveMessage = {
+  msg_type: 'tiktok_comment'
+  msg_id: string
+  nick_name: string
+  user_id: string
+  unique_id: string
+  content: string
+  time: number
+}
+
 declare type LiveMessage =
   | WechatChannelLiveMessage
   | DouyinLiveMessage
   | XiaohongshuCommentLiveMessage
   | TaobaoCommentLiveMessage
+  | TikTokCommentLiveMessage

@@ -26,6 +26,10 @@ export const listeningSources: Record<ListeningSource, { name: string; tips: str
     name: '快手',
     tips: '快手监听目前暂时只支持用户评论消息',
   },
+  tiktok: {
+    name: 'TikTok LIVE',
+    tips: '只接收连接成功后的新评论，不回放连接前的历史弹幕',
+  },
 } as const
 
 type Ability = {
@@ -71,9 +75,14 @@ export const abilities: Record<LiveControlPlatform, Ability> = {
       source: ['taobao'],
     },
   },
+  tiktok: {
+    autoReply: {
+      source: ['tiktok'],
+    },
+  },
   dev: {
     autoReply: {
-      source: ['compass', 'control', 'wechat-channel', 'xiaohongshu', 'taobao'],
+      source: ['compass', 'control', 'wechat-channel', 'xiaohongshu', 'taobao', 'tiktok'],
     },
   },
 }

@@ -22,7 +22,7 @@ export function CodexAutoToggle({ listening }: { listening: boolean }) {
   const [error, setError] = useState('')
   const [voiceStatus, setVoiceStatus] = useState('')
   const enabled = state.enabled && state.accountId === currentAccountId
-  if (platform !== 'xiaohongshu') return null
+  if (!['xiaohongshu', 'tiktok'].includes(platform)) return null
   async function configure(delivery: 'text' | 'voice', next: boolean) {
     setBusy(true)
     setError('')

@@ -17,6 +17,7 @@ const basePlatforms: Record<LiveControlPlatform, string> = {
   wxchannel: '视频号',
   kuaishou: '快手小店',
   taobao: '淘宝',
+  tiktok: 'TikTok LIVE',
   dev: '测试平台',
 }
 

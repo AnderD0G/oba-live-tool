@@ -2,7 +2,7 @@
   "name": "oba-live-tool-codex",
   "productName": "OBA-Codex",
   "type": "module",
-  "version": "1.6.3-codex.10",
+  "version": "1.6.3-codex.11",
   "private": true,
   "description": "直播工具，用于直播带货，能自动弹窗，自动发言",
   "author": "qiutongxue",
@@ -18,7 +18,7 @@
     "build": "tsc && vite build && electron-builder --publish never",
     "preview": "vite preview",
     "pretest": "vite build --mode=test",
-    "test": "vitest run",
+    "test": "tsx --test tests/*.test.ts",
     "test:codex": "tsx --test tests/codexDraft.test.ts tests/codexPersistent.test.ts tests/codexAutoReply.test.ts tests/codexSend.test.ts tests/localVoiceClient.test.ts tests/commentCatcher.test.ts tests/codexRuntime.test.ts",
     "test:codex-live": "tsx scripts/test-codex-live.ts",
     "build:local": "tsc && vite build && electron-builder --win --dir --publish never",
@@ -27,13 +27,14 @@
     "release": "node ./scripts/release",
     "slow-server": "node ./scripts/slow-server.js",
     "build:installer": "node scripts/prepare-codex-runtime.mjs && tsc --noEmit && vite build && node scripts/build-windows-installer.cjs",
-    "test:platform": "tsx --test tests/platformConnection.test.ts"
+    "test:platform": "tsx --test tests/platformConnection.test.ts tests/tiktokPlatform.test.ts"
   },
   "dependencies": {
     "electron-updater": "6.6.2",
     "playwright": "^1.50.0",
     "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tiktok-live-connector": "^2.4.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.10",
@@ -96,6 +97,7 @@
     "semver": "^7.7.1",
     "tailwind-merge": "^3.0.2",
     "tailwindcss": "^4.0.15",
+    "tinyexec": "^1.3.1",
     "tsx": "^4.19.4",
     "tw-animate-css": "^1.2.4",
     "typescript": "^5.9.3",
@@ -105,8 +107,7 @@
     "vite-plugin-electron-renderer": "^0.14.6",
     "ws": "^8.18.1",
     "yaml": "^2.8.2",
-    "zustand": "^5.0.3",
-    "tinyexec": "^1.3.1"
+    "zustand": "^5.0.3"
   },
   "lint-staged": {
     "*": [

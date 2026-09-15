@@ -20,7 +20,11 @@ export class AccountManager {
     })
   }
 
-  createSession(platformName: LiveControlPlatform, account: Account) {
+  createSession(
+    platformName: LiveControlPlatform,
+    account: Account,
+    platformConfig?: LivePlatformConfig,
+  ) {
     this.setAccountName(account.id, account.name)
     const existSession = this.accountSessions.get(account.id)
     if (existSession) {
@@ -28,7 +32,7 @@ export class AccountManager {
       existSession.disconnect()
     }
 
-    const accountSession = new AccountSession(platformName, account)
+    const accountSession = new AccountSession(platformName, account, platformConfig)
     this.accountSessions.set(account.id, accountSession)
     return accountSession
   }

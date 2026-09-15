@@ -107,9 +107,13 @@ export class CaptureStore {
   }
   comment(comment: CaptureComment) {
     if (
-      !['comment', 'xiaohongshu_comment', 'taobao_comment', 'wechat_channel_live_msg'].includes(
-        comment.msg_type,
-      ) ||
+      ![
+        'comment',
+        'xiaohongshu_comment',
+        'taobao_comment',
+        'wechat_channel_live_msg',
+        'tiktok_comment',
+      ].includes(comment.msg_type) ||
       comment.is_self ||
       typeof comment.content !== 'string' ||
       !comment.msg_id ||

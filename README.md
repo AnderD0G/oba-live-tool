@@ -2,12 +2,14 @@
 
 在 OBA Live Tool 上增加自然语言规则助手、弹幕捕获、每人限单、持久化打印队列、40 × 30 mm 标签及常驻 Codex 文字回复。
 
-- **Windows 安装包**：[v1.6.3-codex.10](https://github.com/AnderD0G/oba-live-tool/releases/tag/v1.6.3-codex.10)
+- **当前开发版**：v1.6.3-codex.11，新增 TikTok LIVE 第一版测试。
 - **首次安装**：[安装说明](INSTALL-GUIDE.txt)，安装后自动进入环境检查页。内置官方 Codex CLI，无须另外安装 Node.js。
 - **功能与开发说明**：[定制版说明](CODEX-DRAFTS.md)。开发分支：`feat/codex-comment-drafts`。
 - 新电脑需自行登录小红书 / ChatGPT，并安装实际打印机的驱动。语音服务及模型不包含在本安装包中。
 
 本版已同步上游 v1.6.3 的抖音小店修复，解决中控台连接卡住及页面重复元素导致功能定位失败的问题。保留全部定制功能。连接模拟测试通过；实际账号与平台页面仍需登录验证。
+
+TikTok LIVE 第一版沿用现有操作流程：选择 TikTok LIVE、填写主播 @账号、在 OBA 打开的网页登录、开始监听。新弹幕会进入评论列表、弹幕捕手和打印队列；文字回复通过本机已登录的 TikTok 网页发送。弹幕接收依赖 `tiktok-live-connector`，许可证及来源见 [第三方声明](THIRD-PARTY-NOTICES.txt)。
 
 本项目是 [qiutongxue/oba-live-tool](https://github.com/qiutongxue/oba-live-tool) 的独立定制 Fork，保留上游 MIT 许可证。以下为原项目介绍；其中上游下载链接对应原版。
 
@@ -279,4 +281,3 @@ AI 助手只支持文本对话，在使用 AI 助手功能前，请先设置好�
 
 
 [github license badge]: https://img.shields.io/badge/license-MIT-5c6bc0?style=flat&labelColor=24292e
-

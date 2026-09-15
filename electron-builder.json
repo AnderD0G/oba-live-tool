@@ -10,7 +10,8 @@
   "files": ["dist-electron", "dist"],
   "extraResources": [
     { "from": "vendor-build/codex/package", "to": "codex" },
-    { "from": "INSTALL-GUIDE.txt", "to": "INSTALL-GUIDE.txt" }
+    { "from": "INSTALL-GUIDE.txt", "to": "INSTALL-GUIDE.txt" },
+    { "from": "THIRD-PARTY-NOTICES.txt", "to": "THIRD-PARTY-NOTICES.txt" }
   ],
   "mac": {
     "artifactName": "${productName}_${version}_macos_${arch}.${ext}",
