@@ -1,6 +1,15 @@
 # OBA Codex 评论草稿（本地定制版）
 
-基于官方 v1.6.1（commit 2a50be8690844704f0ab359c36742572a92a6320），开发分支 `feat/codex-comment-drafts`。保留上游 MIT LICENSE。
+从官方 v1.6.1（commit 2a50be8690844704f0ab359c36742572a92a6320）起步，现已合并上游 v1.6.3 及截至 47c8b67 的更新。开发分支 `feat/codex-comment-drafts`。保留上游 MIT LICENSE。
+
+## 抖音小店修复版 1.6.3-codex.10
+
+- 同步上游修复：连接状态检测等待中控标记进入 DOM，避免首个匹配元素不可见时一直等待。
+- 抖音小店连接阶段刷新页面，清理重复的中控元素，恢复按钮定位。小红书继续使用自身的打开新页面流程。
+- 同步上游 tinyexec 依赖、模型列表及维护更新。保留定制应用身份、安装器、Codex、捕手和打印功能。
+- 验证：35 项现有测试、3 项真实浏览器中的离线模拟测试（重复元素、登录跳转、小红书连接），以及 TypeScript 检查。未使用真实抖店账号发送消息或操作商品；上线连接情况需用户登录验证。
+
+安装新版前退出旧版，使用相同安装位置更新。应用 ID 和用户数据路径不变，已有规则及打印队列按原存储保留；重启后仍需手动开启监听、捕获和自动打印。
 
 ## Windows 安装版 1.6.1-codex.9
 
@@ -25,7 +34,7 @@ pnpm run test:codex
 pnpm run build:installer
 ```
 
-构建需联网下载固定版本的官方 Codex 原生组件及许可证；校验 SHA-512 后打入资源目录。Windows NSIS 模板使用临时短路径，避免 pnpm 深目录导致路径过长。产物位于 `release/1.6.1-codex.9/`。`vendor-build/`、安装产物和用户数据均不进入 Git。
+构建需联网下载固定版本的官方 Codex 原生组件及许可证；校验 SHA-512 后打入资源目录。Windows NSIS 模板使用临时短路径，避免 pnpm 深目录导致路径过长。产物位于 `release/<package.json 中的版本号>/`。`vendor-build/`、安装产物和用户数据均不进入 Git。执行 `pnpm run test:platform` 可运行离线连接测试，需要可用的 Edge / Chrome 或 Playwright Chromium。
 
 发布验证：TypeScript 检查、35 项自动测试、内置 CLI 的无登录环境握手、独立空白应用配置首次启动和 NSIS 安装包完整性检查。没有通过验证脚本发送真实弹幕、调用模型或打印实体标签。安装包未做商业代码签名。
 

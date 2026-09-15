@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron } from 'playwright'
@@ -33,7 +33,8 @@ Object.assign(env, {
   LOCALAPPDATA: path.join(root, 'local'),
   CODEX_HOME: codexHome,
 })
-const executablePath = path.resolve('release/1.6.1-codex.9/win-unpacked/OBA-Codex.exe')
+const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+const executablePath = path.resolve(`release/${version}/win-unpacked/OBA-Codex.exe`)
 const application = await electron.launch({
   executablePath,
   args: [`--user-data-dir=${path.join(data, 'profile')}`],

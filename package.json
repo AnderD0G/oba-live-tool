@@ -2,7 +2,7 @@
   "name": "oba-live-tool-codex",
   "productName": "OBA-Codex",
   "type": "module",
-  "version": "1.6.1-codex.9",
+  "version": "1.6.3-codex.10",
   "private": true,
   "description": "直播工具，用于直播带货，能自动弹窗，自动发言",
   "author": "qiutongxue",
@@ -26,7 +26,8 @@
     "bump": "bumpp --no-commit --no-tag --no-push && changelogen --output",
     "release": "node ./scripts/release",
     "slow-server": "node ./scripts/slow-server.js",
-    "build:installer": "node scripts/prepare-codex-runtime.mjs && tsc --noEmit && vite build && node scripts/build-windows-installer.cjs"
+    "build:installer": "node scripts/prepare-codex-runtime.mjs && tsc --noEmit && vite build && node scripts/build-windows-installer.cjs",
+    "test:platform": "tsx --test tests/platformConnection.test.ts"
   },
   "dependencies": {
     "electron-updater": "6.6.2",
@@ -104,7 +105,8 @@
     "vite-plugin-electron-renderer": "^0.14.6",
     "ws": "^8.18.1",
     "yaml": "^2.8.2",
-    "zustand": "^5.0.3"
+    "zustand": "^5.0.3",
+    "tinyexec": "^1.3.1"
   },
   "lint-staged": {
     "*": [
