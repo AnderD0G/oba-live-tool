@@ -1,8 +1,9 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { CodexDraftRequest, CodexDraftResult, CodexStatus } from '../../../shared/codexDraft'
+import { detectCodex } from './CodexRuntime'
 
 export function validateRequest(value: CodexDraftRequest): void {
   if (!value || typeof value.requestId !== 'string' || !/^[\w-]{1,80}$/.test(value.requestId))
@@ -80,26 +81,7 @@ export function buildArgs(directory: string, model?: string): string[] {
 }
 
 export async function findCodex(): Promise<string> {
-  const exe = process.platform === 'win32' ? 'codex.exe' : 'codex'
-  const candidates = (process.env.PATH ?? '')
-    .split(path.delimiter)
-    .filter(Boolean)
-    .map(dir => path.join(dir, exe))
-  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
-    const root = path.join(process.env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin')
-    for (const dir of await readdir(root, { withFileTypes: true }).catch(() => [])) {
-      if (dir.isDirectory()) candidates.push(path.join(root, dir.name, exe))
-    }
-  }
-  for (const candidate of candidates) {
-    try {
-      await access(candidate)
-      return candidate
-    } catch {
-      /* Try the next installed location. */
-    }
-  }
-  throw new Error('未找到 Codex CLI。请先安装并执行 codex login，再重启工具。')
+  return (await detectCodex()).path
 }
 
 export class CodexDraftService {

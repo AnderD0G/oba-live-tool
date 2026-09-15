@@ -155,6 +155,25 @@ export class PersistentCodexDraftService {
     }
   }
 
+  async accountReady(): Promise<boolean> {
+    const runtime = await this.ready()
+    const account = await runtime.server.request<{ account: unknown; requiresOpenaiAuth: boolean }>(
+      'account/read',
+      { refreshToken: false },
+    )
+    return !!account.account || account.requiresOpenaiAuth === false
+  }
+
+  async startLogin(): Promise<{ loginId: string; authUrl: string }> {
+    const runtime = await this.ready()
+    return runtime.server.request('account/login/start', { type: 'chatgpt' })
+  }
+
+  async cancelLogin(loginId: string): Promise<void> {
+    if (this.runtime?.server.alive)
+      await this.runtime.server.request('account/login/cancel', { loginId })
+  }
+
   dispose() {
     this.closed = true
     this.active?.stop?.(new Error('Codex 服务已关闭'))
@@ -187,6 +206,7 @@ export class PersistentCodexDraftService {
     owner: number,
     request: CodexDraftRequest,
     progress: (event: CodexDraftProgress) => void = () => {},
+    task?: { instructions: string; prompt: string },
   ): Promise<CodexDraftResult> {
     try {
       validateRequest(request)
@@ -219,7 +239,8 @@ export class PersistentCodexDraftService {
         sandbox: 'read-only',
         model: request.model,
         config: runtime.config,
-        baseInstructions: '你是直播评论回复草稿助手。只输出简短中文回复，不调用任何工具。',
+        baseInstructions:
+          task?.instructions ?? '你是直播评论回复草稿助手。只输出简短中文回复，不调用任何工具。',
         developerInstructions: '',
         environments: [],
         dynamicTools: [],
@@ -279,7 +300,7 @@ export class PersistentCodexDraftService {
       progress({ message: '常驻进程已就绪，正在等待模型回复…' })
       const turn = await runtime.server.request<{ turn: { id: string } }>('turn/start', {
         threadId: job.threadId,
-        input: [{ type: 'text', text: buildPrompt(request) }],
+        input: [{ type: 'text', text: task?.prompt ?? buildPrompt(request) }],
         effort: 'low',
       })
       job.turnId = turn.turn.id

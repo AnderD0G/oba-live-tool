@@ -2,7 +2,7 @@
   "name": "oba-live-tool-codex",
   "productName": "OBA-Codex",
   "type": "module",
-  "version": "1.6.1-codex.5",
+  "version": "1.6.1-codex.9",
   "private": true,
   "description": "直播工具，用于直播带货，能自动弹窗，自动发言",
   "author": "qiutongxue",
@@ -19,13 +19,14 @@
     "preview": "vite preview",
     "pretest": "vite build --mode=test",
     "test": "vitest run",
-    "test:codex": "tsx --test tests/codexDraft.test.ts tests/codexPersistent.test.ts tests/codexAutoReply.test.ts tests/codexSend.test.ts",
+    "test:codex": "tsx --test tests/codexDraft.test.ts tests/codexPersistent.test.ts tests/codexAutoReply.test.ts tests/codexSend.test.ts tests/localVoiceClient.test.ts tests/commentCatcher.test.ts tests/codexRuntime.test.ts",
     "test:codex-live": "tsx scripts/test-codex-live.ts",
     "build:local": "tsc && vite build && electron-builder --win --dir --publish never",
     "prepare": "husky",
     "bump": "bumpp --no-commit --no-tag --no-push && changelogen --output",
     "release": "node ./scripts/release",
-    "slow-server": "node ./scripts/slow-server.js"
+    "slow-server": "node ./scripts/slow-server.js",
+    "build:installer": "node scripts/prepare-codex-runtime.mjs && tsc --noEmit && vite build && node scripts/build-windows-installer.cjs"
   },
   "dependencies": {
     "electron-updater": "6.6.2",

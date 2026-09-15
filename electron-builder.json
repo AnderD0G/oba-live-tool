@@ -8,6 +8,10 @@
   },
   "electronLanguages": ["zh-CN", "en-US"],
   "files": ["dist-electron", "dist"],
+  "extraResources": [
+    { "from": "vendor-build/codex/package", "to": "codex" },
+    { "from": "INSTALL-GUIDE.txt", "to": "INSTALL-GUIDE.txt" }
+  ],
   "mac": {
     "artifactName": "${productName}_${version}_macos_${arch}.${ext}",
     "target": [
@@ -30,10 +34,14 @@
     "artifactName": "${productName}_${version}_windows_${arch}.${ext}"
   },
   "nsis": {
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "OBA 弹幕与打印",
+    "installerLanguages": ["zh_CN", "en_US"],
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
     "deleteAppDataOnUninstall": false,
-    "differentialPackage": true
+    "differentialPackage": false
   }
 }

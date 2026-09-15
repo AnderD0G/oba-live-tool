@@ -42,3 +42,6 @@ coverage/
 
 .trae
 .claude
+/vendor-build/
+/scripts/print-one-test-label.cjs
+/scripts/print-large-test-label.cjs

@@ -1,14 +1,21 @@
 import type { LogMessage } from 'electron-log'
 import type { ProgressInfo, UpdateDownloadedEvent } from 'electron-updater'
+import type { TicketCommand, TicketResponse } from './capturePrinting'
 import type { CodexAutoSettings, CodexAutoState } from './codexAutoReply'
 import type { CodexDraftRequest, CodexDraftResult, CodexStatus } from './codexDraft'
+import type { CatcherCommand, CatcherResponse } from './commentCatcher'
 import { IPC_CHANNELS } from './ipcChannels'
+import type { SetupAction, SetupResult } from './setup'
 
 export interface IpcChannels {
+  [IPC_CHANNELS.setup.request]: (action: SetupAction) => Promise<SetupResult>
+  [IPC_CHANNELS.catcher.request]: (command: CatcherCommand) => Promise<CatcherResponse>
+  [IPC_CHANNELS.tickets.request]: (command: TicketCommand) => Promise<TicketResponse>
   [IPC_CHANNELS.codexAuto.configure]: (
     settings: CodexAutoSettings,
   ) => Promise<{ ok: boolean; error?: string }>
   [IPC_CHANNELS.codexAuto.state]: () => CodexAutoState
+  [IPC_CHANNELS.codexAuto.voiceStatus]: () => Promise<{ ok: boolean; message: string }>
   [IPC_CHANNELS.codexAuto.changed]: (state: CodexAutoState) => void
   [IPC_CHANNELS.codexDraft.status]: () => Promise<CodexStatus>
   [IPC_CHANNELS.codexDraft.generate]: (request: CodexDraftRequest) => Promise<CodexDraftResult>

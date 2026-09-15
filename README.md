@@ -1,3 +1,16 @@
+# OBA 弹幕捕手与扣号打印（定制版）
+
+在 OBA Live Tool 上增加自然语言规则助手、弹幕捕获、每人限单、持久化打印队列、40 × 30 mm 标签及常驻 Codex 文字回复。
+
+- **Windows 安装包**：[v1.6.1-codex.9](https://github.com/AnderD0G/oba-live-tool/releases/tag/v1.6.1-codex.9)
+- **首次安装**：[安装说明](INSTALL-GUIDE.txt)，安装后自动进入环境检查页。内置官方 Codex CLI，无须另外安装 Node.js。
+- **功能与开发说明**：[定制版说明](CODEX-DRAFTS.md)。开发分支：`feat/codex-comment-drafts`。
+- 新电脑需自行登录小红书 / ChatGPT，并安装实际打印机的驱动。语音服务及模型不包含在本安装包中。
+
+本项目是 [qiutongxue/oba-live-tool](https://github.com/qiutongxue/oba-live-tool) 的独立定制 Fork，保留上游 MIT 许可证。以下为原项目介绍；其中上游下载链接对应原版。
+
+---
+
 <div align="center">
 
   <img src="./public/favicon.png" alt="logo" width="256px" height="auto">

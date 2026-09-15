@@ -1,5 +1,5 @@
 import { RefreshCwIcon, TerminalIcon } from 'lucide-react'
-import { Outlet } from 'react-router'
+import { Outlet, useNavigate } from 'react-router'
 import { IPC_CHANNELS } from 'shared/ipcChannels'
 import LogDisplayer from '@/components/common/LogDisplayer'
 import Sidebar from '@/components/common/Sidebar'
@@ -87,6 +87,10 @@ function useGlobalIpcListener() {
 }
 
 function App() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (localStorage.getItem('oba-setup-v1') !== 'done') navigate('/setup', { replace: true })
+  }, [navigate])
   const { enabled: devMode } = useDevMode()
   const { accounts, currentAccountId } = useAccounts()
 

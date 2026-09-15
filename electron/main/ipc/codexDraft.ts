@@ -5,9 +5,12 @@ import { accountManager } from '#/managers/AccountManager'
 import { CodexAutoReplyService } from '#/services/CodexAutoReplyService'
 import { validateRequest } from '#/services/CodexDraftService'
 import { codexProxyEnvironment } from '#/services/codexProxy'
+import { configuredVoiceTokenPath, LocalVoiceClient } from '#/services/LocalVoiceClient'
 import { PersistentCodexDraftService } from '#/services/PersistentCodexDraftService'
 import { typedIpcMainHandle } from '#/utils'
 import windowManager from '#/windowManager'
+import { setupCommentCatcher } from './commentCatcher'
+import { setupEnvironmentIpc } from './setup'
 
 export function setupCodexDraftIpcHandlers() {
   const service = new PersistentCodexDraftService(async () => {
@@ -15,8 +18,11 @@ export function setupCodexDraftIpcHandlers() {
     return codexProxyEnvironment(proxy, process.env)
   })
   const owners = new Set<number>()
+  setupEnvironmentIpc(service)
+  setupCommentCatcher(service)
   const autoOwner = -100
   const autoOwners = new Set<number>()
+  const voice = new LocalVoiceClient(() => configuredVoiceTokenPath(app.getPath('userData')))
   const auto = new CodexAutoReplyService({
     ready: id => accountManager.accountSessions.get(id)?.codexAutoReady() ?? false,
     hostName: id => accountManager.accountSessions.get(id)?.getLiveAccountName() ?? '',
@@ -27,12 +33,29 @@ export function setupCodexDraftIpcHandlers() {
     },
     send: async (id, text, signal) =>
       accountManager.accountSessions.get(id)?.sendCodexReply(text, signal) ?? false,
+    speak: (accountId, commentId, text, signal, progress) =>
+      voice.speak(accountId, commentId, text, signal, progress),
     changed: state => windowManager.send(IPC_CHANNELS.codexAuto.changed, state),
   })
   emitter.on('live-comment', ({ accountId, comment }) => auto.comment(accountId, comment))
   emitter.on('comment-listener-stopped', ({ accountId }) => auto.disconnected(accountId))
-  app.once('before-quit', () => auto.disable('应用已关闭'))
+  let quitting = false
+  app.on('before-quit', event => {
+    auto.disable('应用已关闭')
+    if (!quitting && voice.isActive) {
+      event.preventDefault()
+      quitting = true
+      void voice
+        .cancelActive()
+        .catch(() => {})
+        .finally(() => {
+          service.dispose()
+          app.quit()
+        })
+    }
+  })
   typedIpcMainHandle(IPC_CHANNELS.codexAuto.state, () => auto.snapshot())
+  typedIpcMainHandle(IPC_CHANNELS.codexAuto.voiceStatus, () => voice.check())
   typedIpcMainHandle(IPC_CHANNELS.codexAuto.configure, async (event, settings) => {
     try {
       if (
@@ -44,6 +67,16 @@ export function setupCodexDraftIpcHandlers() {
       if (!settings.enabled) {
         auto.disable()
         return { ok: true }
+      }
+      if (
+        settings.delivery !== undefined &&
+        settings.delivery !== 'text' &&
+        settings.delivery !== 'voice'
+      )
+        throw new Error('无效回复模式')
+      if (settings.delivery === 'voice') {
+        const connection = await voice.check()
+        if (!connection.ok) throw new Error(connection.message)
       }
       validateRequest({
         requestId: 'auto-settings',

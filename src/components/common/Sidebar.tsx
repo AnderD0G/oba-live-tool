@@ -1,3 +1,4 @@
+import { Filter, Printer } from 'lucide-react'
 import { NavLink } from 'react-router'
 import { abilities, autoReplyPlatforms } from '@/abilities'
 import { useCurrentAutoMessage } from '@/hooks/useAutoMessage'
@@ -30,6 +31,9 @@ export default function Sidebar() {
   const platform = useCurrentLiveControl(context => context.platform)
 
   const tabs: SidebarTab[] = [
+    { id: '/setup', name: '安装与环境检查', icon: <CarbonSettings className="w-5 h-5" /> },
+    { id: '/comment-catcher', name: '弹幕捕手', icon: <Filter className="w-5 h-5" /> },
+    { id: '/capture-printing', name: '扣号打印', icon: <Printer className="w-5 h-5" /> },
     {
       id: '/',
       name: '打开中控台',

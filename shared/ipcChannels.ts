@@ -1,5 +1,9 @@
 export const IPC_CHANNELS = {
+  setup: { request: 'setup:request' },
+  catcher: { request: 'catcher:request' },
+  tickets: { request: 'tickets:request' },
   codexAuto: {
+    voiceStatus: 'codexAuto:voiceStatus',
     configure: 'codexAuto:configure',
     state: 'codexAuto:state',
     changed: 'codexAuto:changed',

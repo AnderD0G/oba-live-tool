@@ -28,6 +28,13 @@ interface Dependencies {
   ) => Promise<CodexDraftResult>
   cancel: () => void
   send: (accountId: string, text: string, signal: AbortSignal) => Promise<boolean>
+  speak?: (
+    accountId: string,
+    commentId: string,
+    text: string,
+    signal: AbortSignal,
+    progress: (message: string) => void,
+  ) => Promise<void>
   changed: (state: CodexAutoState) => void
   intervalMs?: number
 }
@@ -65,7 +72,11 @@ export class CodexAutoReplyService {
     this.epoch++
     this.state.enabled = true
     this.state.accountId = settings.accountId
-    this.state.message = '已开启：等待新评论，生成完成后自动发送'
+    this.state.delivery = settings.delivery ?? 'text'
+    this.state.message =
+      this.state.delivery === 'voice'
+        ? '自动语音已开启：等待新评论，生成回复后送入声卡'
+        : '已开启：等待新评论，生成完成后自动发送'
     this.emit()
   }
 
@@ -124,6 +135,7 @@ export class CodexAutoReplyService {
       text: '',
       phase: 'queued',
       detail: '排队等待',
+      delivery: this.state.delivery,
     }
     this.state.records = [record, ...this.state.records].slice(0, 50)
     if (this.queue.length >= 10) {
@@ -190,7 +202,7 @@ export class CodexAutoReplyService {
             {
               requestId: randomUUID(),
               comment: record.comment,
-              instructions: `${settings.instructions}\n本条将自动发送到直播间，请只回复正文，控制在60字以内。`,
+              instructions: `${settings.instructions}\n${settings.delivery === 'voice' ? '本条会用主播音色转换成语音播报，请用自然口语，只写回复正文，不要表情、Markdown或舞台指示。' : '本条将自动发送到直播间，请只回复正文。'}控制在60字以内。`,
               model: settings.model,
             },
             event => {
@@ -210,6 +222,22 @@ export class CodexAutoReplyService {
           record.text = result.text.trim()
           if (!record.text || [...record.text].length > 100)
             throw new Error('草稿为空或超过100字，已暂停自动发送')
+          if (settings.delivery === 'voice') {
+            if (!this.deps.speak) throw new Error('语音接口未配置')
+            record.phase = 'speaking'
+            record.detail = '准备送入语音台'
+            this.emit()
+            await this.deps.speak(record.accountId, record.id, record.text, signal, message => {
+              if (current()) {
+                record.detail = message
+                this.emit()
+              }
+            })
+            record.phase = 'spoken'
+            record.detail = '声卡播放完成；观众端收音请在直播间核听'
+            this.nextSend = Date.now() + (this.deps.intervalMs ?? 5000)
+            continue
+          }
           record.phase = 'sending'
           record.detail = '正在发送，等待平台确认'
           this.emit()
@@ -223,11 +251,12 @@ export class CodexAutoReplyService {
           this.nextSend = Date.now() + (this.deps.intervalMs ?? 5000)
         } catch (error) {
           record.phase = signal.aborted ? 'cancelled' : 'failed'
-          record.detail = signal.aborted
-            ? '已关闭；若已提交，请查看直播间'
-            : error instanceof Error
-              ? error.message
-              : '回复失败'
+          record.detail =
+            signal.aborted && settings.delivery !== 'voice'
+              ? '已关闭；若已提交，请查看直播间'
+              : error instanceof Error
+                ? error.message
+                : '回复失败'
           if (this.epoch === epoch && this.state.enabled) this.disable(record.detail)
         } finally {
           this.controller = undefined

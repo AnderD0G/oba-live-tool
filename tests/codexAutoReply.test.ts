@@ -20,6 +20,8 @@ async function until(check: () => boolean) {
 }
 function fixture() {
   const sent: string[] = []
+  const spoken: string[] = []
+  let speak: (signal: AbortSignal) => Promise<void> = async () => {}
   let ready = true
   let confirmed = true
   let generate: () => Promise<CodexDraftResult> = async () => ({ ok: true, text: '欢迎你！' })
@@ -34,12 +36,20 @@ function fixture() {
       sent.push(text)
       return confirmed
     },
+    speak: async (_id, _commentId, text, signal) => {
+      spoken.push(text)
+      await speak(signal)
+    },
     changed: () => {},
     intervalMs: 0,
   })
   return {
     engine,
     sent,
+    spoken,
+    setSpeak: (fn: typeof speak) => {
+      speak = fn
+    },
     setReady: (value: boolean) => {
       ready = value
     },
@@ -111,5 +121,44 @@ test('disconnection cancels pending work; overlong model text is never sent', as
   engine.enable(settings)
   engine.comment('a', { ...comment, msg_id: 'new' })
   await until(() => !engine.snapshot().enabled)
+  assert.equal(sent.length, 0)
+})
+
+test('voice mode generates once, speaks once and never posts a text reply', async () => {
+  const { engine, sent, spoken } = fixture()
+  engine.enable({ ...settings, delivery: 'voice' })
+  engine.comment('a', comment)
+  engine.comment('a', comment)
+  await until(() => engine.snapshot().records[0]?.phase === 'spoken')
+  assert.deepEqual(sent, [])
+  assert.deepEqual(spoken, ['欢迎你！'])
+  assert.equal(engine.snapshot().delivery, 'voice')
+  engine.disable()
+})
+
+test('voice processing is serial and disabling aborts its active speech', async () => {
+  const { engine, sent, spoken, setSpeak } = fixture()
+  let aborted = false
+  setSpeak(
+    signal =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true
+            reject(new Error('语音已取消'))
+          },
+          { once: true },
+        )
+      }),
+  )
+  engine.enable({ ...settings, delivery: 'voice' })
+  engine.comment('a', comment)
+  engine.comment('a', { ...comment, msg_id: '2' })
+  await until(() => spoken.length === 1)
+  engine.disable()
+  await until(() => engine.snapshot().records.every(r => r.phase === 'cancelled'))
+  assert.equal(aborted, true)
+  assert.equal(spoken.length, 1)
   assert.equal(sent.length, 0)
 })
