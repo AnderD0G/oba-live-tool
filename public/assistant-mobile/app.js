@@ -340,11 +340,11 @@ export function mountMobileDesk() {
   const cameraCheck = button('检查机位', 'text-button')
   cameraActions.append(iphoneCamera, androidCamera, cameraCheck)
   const micLabel = element('p', 'control-label', '直播麦克风 · 豆包录音自动联动')
-  const micNotice = element('p', 'control-note', '以 TK Studio 初始开麦为基准；开始豆包录音切换，结束或取消后切回。')
+  const micNotice = element('p', 'control-note', '开始豆包录音前自动静音 TK Studio，结束或取消后恢复原状态。')
   const micActions = element('div', 'control-actions')
   const micToggle = button('切换直播麦克风', 'secondary-button')
   const micCheck = button('检查麦克风控制', 'text-button')
-  const micAlign = button('我已恢复 TK 开麦，重新对齐', 'secondary-button')
+  const micAlign = button('重新读取麦克风状态', 'secondary-button')
   micAlign.hidden = true
   micActions.append(micToggle, micCheck, micAlign)
   const xiaomiLabel = element('p', 'control-label', '小米镜头')
@@ -568,6 +568,7 @@ export function mountMobileDesk() {
     const micBusy = client.isPending('control:studio-mic')
     micToggle.disabled = !connected || micBusy || Boolean(voiceSession) || ['doubao', 'unknown'].includes(micState?.routeState)
     micCheck.disabled = !connected || micBusy
+    micAlign.textContent = micState?.backend === 'api' ? '重新读取麦克风状态' : '我已恢复 TK 开麦，重新对齐'
     micAlign.hidden = micState?.routeState !== 'unknown'
     micAlign.disabled = !connected || micBusy || Boolean(voiceSession)
     const xiaomiBusy = client.isPending('control:xiaomi')
@@ -591,8 +592,15 @@ export function mountMobileDesk() {
   async function runMic(action) {
     if (client.isPending('control:studio-mic')) return
     const result = await client.studioMic(action)
-    micState = result.ok ? result.data : null
-    micNotice.textContent = result.ok ? result.data.routeState === 'doubao' ? '豆包录音联动中，结束或取消后自动切回直播' : result.data.routeState === 'unknown' ? '热键已发送或恢复结果未确认；手动恢复 TK 开麦后重新对齐' : action === 'align-open' ? '已按 TK 开麦状态重新对齐' : result.data.message : result.error.message
+    if (result.ok) {
+      micState = result.data
+      micNotice.textContent = result.data.backend === 'api'
+        ? result.data.routeState === 'unknown' ? `${result.data.message}；请重新读取麦克风状态以恢复联动` : result.data.routeState === 'doubao' ? `${result.data.message}；豆包录音结束后恢复原状态` : result.data.message
+        : result.data.routeState === 'doubao' ? '豆包录音联动中，结束或取消后自动切回直播' : result.data.routeState === 'unknown' ? '热键已发送或恢复结果未确认；手动恢复 TK 开麦后重新对齐' : action === 'align-open' ? '已按 TK 开麦状态重新对齐' : result.data.message
+    } else {
+      if (micState?.backend === 'api' && !['STUDIO_MIC_API_BUSY', 'STUDIO_MIC_API_INVALID_COMMAND', 'STUDIO_MIC_VOICE_BUSY'].includes(result.error.code)) micState = { ...micState, micState: 'unknown', routeState: 'unknown' }
+      micNotice.textContent = result.error.message
+    }
     renderControls()
   }
   async function runXiaomi(command) {

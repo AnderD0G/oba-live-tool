@@ -102,7 +102,7 @@ test('waiting for camera startup does not freeze live-comment polling or replay 
   assert.equal(writes, 1)
 })
 
-async function ui(t: any, data: any = snapshot) {
+async function ui(t: any, data: any = snapshot, apiMic = false) {
   const browser = await chromium.launch({ executablePath: browserExecutable, headless: true })
   t.after(() => browser.close())
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
@@ -114,75 +114,83 @@ async function ui(t: any, data: any = snapshot) {
   await page.addStyleTag({
     content: await readFile(new URL('../public/assistant-mobile/app.css', import.meta.url), 'utf8'),
   })
-  await page.evaluate(value => {
-    let current = value
-    const calls: any[] = []
-    let finish: any
-    ;(window as any).fixture = {
-      calls,
-      update(next: any) {
-        current = next
-      },
-      finish(data: any) {
-        finish({ ok: true, json: async () => ({ ok: true, data }) })
-      },
-    }
-    window.fetch = (async (url: any, init: any = {}) => {
-      const payload = init.body ? JSON.parse(init.body) : undefined
-      calls.push({ url, payload })
-      const ok = (data: any) => ({ ok: true, json: async () => ({ ok: true, data }) })
-      if (url === './api/state') return ok(current)
-      if (url === './api/command' && payload.action === 'translate-retry')
-        return new Promise(resolve => {
-          finish = resolve
-        })
-      if (url === './api/camera')
-        return ok({
-          available: true,
-          selected: payload.target || 'iphone',
-          onProgram: true,
-          message: '机位已核对',
-        })
-      if (url === './api/studio-mic')
-        return ok({
-          supported: true,
-          running: true,
-          accessGranted: true,
-          hotkey: 'Control+Option+M',
-          micState: 'unknown',
-          routeState: payload.action === 'toggle' ? 'unknown' : 'live',
-          linked: true,
-          message: '已发送热键',
-        })
-      if (url === './api/xiaomi')
-        return ok({
-          camera: { state: 'ready' },
-          settings: {
+  await page.evaluate(
+    ({ value, apiMic }) => {
+      let current = value
+      let micRoute: 'live' | 'unknown' = 'live'
+      const calls: any[] = []
+      let finish: any
+      ;(window as any).fixture = {
+        calls,
+        micRouteUnknown() {
+          micRoute = 'unknown'
+        },
+        update(next: any) {
+          current = next
+        },
+        finish(data: any) {
+          finish({ ok: true, json: async () => ({ ok: true, data }) })
+        },
+      }
+      window.fetch = (async (url: any, init: any = {}) => {
+        const payload = init.body ? JSON.parse(init.body) : undefined
+        calls.push({ url, payload })
+        const ok = (data: any) => ({ ok: true, json: async () => ({ ok: true, data }) })
+        if (url === './api/state') return ok(current)
+        if (url === './api/command' && payload.action === 'translate-retry')
+          return new Promise(resolve => {
+            finish = resolve
+          })
+        if (url === './api/camera')
+          return ok({
             available: true,
-            zoom: 1,
-            zoom_min: 1,
-            zoom_max: 10,
-            observed_zoom: 1,
-            focus_supported: true,
-          },
-        })
-      if (url === './api/voice')
-        return ok({
-          status:
-            payload.action === 'start'
-              ? 'recording'
-              : payload.action === 'stop'
-                ? 'stopped'
-                : 'cancelled',
-          rowId: payload.rowId,
-          text: '手机识别中文',
-          ...(payload.action === 'stop'
-            ? { micWarning: '请恢复 TK 开麦后重新对齐', routeState: 'unknown' }
-            : {}),
-        })
-      return ok({})
-    }) as typeof fetch
-  }, data)
+            selected: payload.target || 'iphone',
+            onProgram: true,
+            message: '机位已核对',
+          })
+        if (url === './api/studio-mic')
+          return ok({
+            supported: true,
+            running: true,
+            accessGranted: true,
+            hotkey: apiMic ? '' : 'Control+Option+M',
+            micState: apiMic ? 'muted' : 'unknown',
+            ...(apiMic ? { backend: 'api' } : {}),
+            routeState: !apiMic && payload.action === 'toggle' ? 'unknown' : micRoute,
+            linked: true,
+            message: apiMic ? 'TK Studio 麦克风已静音' : '已发送热键',
+          })
+        if (url === './api/xiaomi')
+          return ok({
+            camera: { state: 'ready' },
+            settings: {
+              available: true,
+              zoom: 1,
+              zoom_min: 1,
+              zoom_max: 10,
+              observed_zoom: 1,
+              focus_supported: true,
+            },
+          })
+        if (url === './api/voice')
+          return ok({
+            status:
+              payload.action === 'start'
+                ? 'recording'
+                : payload.action === 'stop'
+                  ? 'stopped'
+                  : 'cancelled',
+            rowId: payload.rowId,
+            text: '手机识别中文',
+            ...(payload.action === 'stop'
+              ? { micWarning: '请恢复 TK 开麦后重新对齐', routeState: 'unknown' }
+              : {}),
+          })
+        return ok({})
+      }) as typeof fetch
+    },
+    { value: data, apiMic },
+  )
   const script = (
     await readFile(new URL('../public/assistant-mobile/app.js', import.meta.url), 'utf8')
   ).replace(/^export /gm, '')
@@ -294,3 +302,21 @@ browserTest(
     assert.match(await page.getByRole('status').first().innerText(), /恢复 TK 开麦/)
   },
 )
+
+browserTest('phone displays API mute state and keeps confirmed manual controls usable', async t => {
+  const page = await ui(t, snapshot, true)
+  await page.getByText('机位与麦克风', { exact: true }).click()
+  await page.getByText('TK Studio 麦克风已静音', { exact: true }).waitFor()
+  const toggle = page.getByRole('button', { name: '切换直播麦克风', exact: true })
+  await toggle.click()
+  assert.equal(await toggle.isEnabled(), true)
+  assert.equal(
+    await page.getByRole('button', { name: '重新读取麦克风状态', exact: true }).isVisible(),
+    false,
+  )
+  assert.doesNotMatch(await page.locator('.live-controls').innerText(), /热键|辅助功能|初始开麦/)
+  await page.evaluate(() => (window as any).fixture.micRouteUnknown())
+  await page.getByRole('button', { name: '检查麦克风控制', exact: true }).click()
+  await page.getByRole('button', { name: '重新读取麦克风状态', exact: true }).waitFor()
+  assert.doesNotMatch(await page.locator('.live-controls').innerText(), /热键|手动恢复 TK 开麦/)
+})

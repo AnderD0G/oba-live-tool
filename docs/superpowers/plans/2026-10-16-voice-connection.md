@@ -41,14 +41,16 @@
 - [x] Runtime-check the candidate; it failed SIGILL before Chromium started, so restore the working pinned image and use the companion's compatible page protocol.
 - [x] Package/install/open companion 1.0.1; actual local toolbar and forwarding status verified, no implicit ASR/send.
 - [x] Record tests/limits and update launcher/documentation.
-- [ ] Commit/push Mac feature branch and merge verified changes into develop as requested.
+- [x] Commit/push initial Mac feature delivery (`31f881e`). Final API follow-up and develop integration are tracked in the mobile controls release steps.
 
-## Added task: user-approved TK Studio microphone hotkey
+## Added task: TK Studio microphone control
 
-The user chose the direct microphone route: TK Studio and Doubao independently consume the physical microphone; OBS supplies video only. Implement a manual input-device toggle via the supported TK Studio hotkey rather than a private API. The installed Studio accepts at most three keys, so use Control + Option + M. It is a toggle with no reliable mute state readback; do not claim mute success or automatically start ASR.
+The user chose the direct microphone route: TK Studio and Doubao independently consume the physical microphone; OBS supplies video only. A fixed Control + Option + M helper was initially implemented. The user subsequently supplied the existing local service at `http://127.0.0.1:18766/docs`; the active implementation now uses its explicit mute target and actual status. The native helper is retained for compatibility, with no automatic fallback.
 
 - [x] Bind only Studio input-device Mute / Unmute, then navigate away/back and verify persistence.
 - [x] Add fixed-scope native key sender, permission/status checking, concurrency and duplicate-click protection.
 - [x] Add an OBA assistant-desk control with truthful expected-route state. User later requested paired start/stop/cancel hotkey linkage and expressly accepted one initial test instead of repeated UI verification.
-- [ ] Verify tests, native helper, packaged app and local toggle behavior without going live.
-- [ ] Document that audience isolation and other audio sources still require a local recording test.
+- [x] Verify native helper packaging and initial desktop tests. Verify API mute and restore once against the actual Studio microphone icon, with streaming/recording off; restore the original open state.
+- [x] Replace the daily control facade with the fixed local API, mute before ASR and restore the prior state afterward; remove the keyboard permission prompt from desktop and phone.
+- [x] Document the external service dependency and distinguish the controlled microphone from other audio sources.
+- [x] Run final API regression (162 pass, one platform skip), packaged desktop/phone read-only route acceptance and install voice.54 with existing credentials preserved. Branch integration follows the mobile controls release steps.

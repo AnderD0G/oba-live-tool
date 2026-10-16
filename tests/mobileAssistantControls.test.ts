@@ -66,7 +66,7 @@ function state(collecting = true): AssistantDeskState {
     health: { status: 'ok', pendingWrites: 0, dropped: 0, recoveryWarnings: 0 },
   } as AssistantDeskState
 }
-async function fixture(t: TestContext, collecting = true) {
+async function fixture(t: TestContext, collecting = true, apiMic = false) {
   let current = state(collecting)
   const commands: AssistantDeskCommand[] = []
   const cameras: unknown[] = []
@@ -109,9 +109,13 @@ async function fixture(t: TestContext, collecting = true) {
           supported: true,
           running: true,
           accessGranted: true,
-          hotkey: 'Control+Option+M',
-          micState: 'unknown',
-          ...(command.action === 'toggle' ? { sent: true } : {}),
+          hotkey: apiMic ? '' : 'Control+Option+M',
+          micState: apiMic ? 'muted' : 'unknown',
+          ...(apiMic
+            ? { backend: 'api' as const, beforeMuted: false, routeState: 'live' as const }
+            : command.action === 'toggle'
+              ? { sent: true }
+              : {}),
           message: 'Native message',
         },
       }
@@ -351,4 +355,18 @@ test('phone lens controls use the configured camera without exposing or acceptin
   const align = await f.request('api/studio-mic', { action: 'align-open' })
   assert.equal(align.status, 200)
   assert.notEqual(align.body.data.sent, true)
+})
+
+test('phone projects the confirmed API microphone state without keyboard permission or sent claims', async t => {
+  const f = await fixture(t, false, true)
+  for (const action of ['status', 'toggle', 'align-open']) {
+    const result = await f.request('api/studio-mic', { action })
+    assert.equal(result.status, 200)
+    assert.equal(result.body.data.backend, 'api')
+    assert.equal(result.body.data.micState, 'muted')
+    assert.equal(result.body.data.routeState, 'live')
+    assert.equal(result.body.data.beforeMuted, false)
+    assert.equal(result.body.data.sent, undefined)
+    assert.doesNotMatch(result.body.data.message, /热键|辅助功能|重新对齐/)
+  }
 })

@@ -178,8 +178,14 @@ const SAFE_MESSAGES: Record<string, string> = {
   STUDIO_MIC_TIMEOUT: '热键操作超时，请先核对 TikTok LIVE Studio 麦克风状态',
   STUDIO_MIC_HELPER_FAILED: '热键操作结果未确认，请在电脑端核对麦克风状态',
   STUDIO_MIC_INVALID_RESPONSE: '热键状态未确认，请在电脑端检查',
-  STUDIO_MIC_VOICE_BUSY: '请先结束豆包录音，或恢复 TK 开麦后重新对齐',
-  VOICE_MIC_BLOCKED: '麦克风联动未就绪，请先检查 TK Studio，必要时恢复开麦后重新对齐',
+  STUDIO_MIC_VOICE_BUSY: '请先结束豆包录音，或重新读取麦克风状态',
+  STUDIO_MIC_API_INVALID_COMMAND: '麦克风操作参数无效',
+  STUDIO_MIC_API_UNAVAILABLE: 'TK Studio 麦克风接口未连接，请在电脑端检查',
+  STUDIO_MIC_API_INVALID_RESPONSE: '麦克风接口状态无效，请重新读取状态',
+  STUDIO_MIC_API_UNCONFIRMED: '麦克风操作未确认，请重新读取状态',
+  STUDIO_MIC_API_BUSY: '麦克风操作正在进行，请稍候',
+  STUDIO_MIC_API_TIMEOUT: '麦克风操作超时，请重新读取状态；不会自动重复切换',
+  VOICE_MIC_BLOCKED: '麦克风联动未就绪，请检查 TK Studio 或重新读取麦克风状态',
   VOICE_START_NOT_STARTED: '豆包录音未开始，请检查语音服务和麦克风权限后重试',
 }
 
@@ -277,6 +283,17 @@ export class MobileAssistantDeskServer {
     const result = await this.options.studioMic(body as MobileStudioMicCommand)
     if (!result.ok) return publicFailure(result)
     const data = result.data
+    if (data?.backend === 'api') {
+      if ([data.supported, data.running, data.accessGranted].some(value => typeof value !== 'boolean') || data.hotkey !== '' ||
+        (data.supported ? !['muted', 'unmuted'].includes(data.micState) || !data.running || !data.accessGranted : data.micState !== 'unknown'))
+        return failure('STUDIO_MIC_API_INVALID_RESPONSE', SAFE_MESSAGES.STUDIO_MIC_API_INVALID_RESPONSE)
+      return { ok: true, data: { supported: data.supported, running: data.running, accessGranted: data.accessGranted,
+        backend: 'api', hotkey: '', micState: data.micState,
+        ...(typeof data.beforeMuted === 'boolean' ? { beforeMuted: data.beforeMuted } : {}),
+        ...(data.routeState && ['live', 'doubao', 'unknown'].includes(data.routeState) ? { routeState: data.routeState } : {}),
+        ...(typeof data.linked === 'boolean' ? { linked: data.linked } : {}),
+        message: !data.supported ? '此麦克风接口当前仅在 Mac 启用' : data.micState === 'muted' ? 'TK Studio 麦克风已静音' : 'TK Studio 麦克风已开麦' } }
+    }
     if (!data || data.micState !== 'unknown' || data.hotkey !== 'Control+Option+M' ||
       [data.supported, data.running, data.accessGranted].some(value => typeof value !== 'boolean') ||
       (input.action === 'toggle' && data.sent !== true)) return failure('STUDIO_MIC_INVALID_RESPONSE', SAFE_MESSAGES.STUDIO_MIC_INVALID_RESPONSE)
@@ -532,7 +549,7 @@ export class MobileAssistantDeskServer {
             return send(400, failure('MOBILE_SESSION_CHANGED', SAFE_MESSAGES.MOBILE_SESSION_CHANGED))
         }
         return send(200, { ok: true, data: { status: data.status, rowId: data.rowId, ...(expected === 'stopped' ? { text: data.text } : {}),
-          ...(data.micWarning ? { micWarning: '豆包录音已结束，直播麦克风恢复未确认；请恢复 TK 开麦后重新对齐' } : {}),
+          ...(data.micWarning ? { micWarning: '豆包录音已结束，直播麦克风恢复未确认；请重新读取麦克风状态' } : {}),
           ...(data.routeState && ['live', 'doubao', 'unknown'].includes(data.routeState) ? { routeState: data.routeState } : {}) } })
       }
       let command: AssistantDeskCommand

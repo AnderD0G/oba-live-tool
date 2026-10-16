@@ -121,3 +121,108 @@ test('Windows voice operation does not invoke a Mac hotkey helper', async () => 
   assert.equal(await router.release(owner), undefined)
   assert.equal(router.state().linked, false)
 })
+
+test('API routing mutes explicitly and restores the prior unmuted state without toggling', async () => {
+  const targets: boolean[] = []
+  let muted = false
+  const router = new VoiceMicRouter({
+    platform: 'darwin',
+    toggle: async () => {
+      throw Error('must not toggle')
+    },
+    setMuted: async target => {
+      targets.push(target)
+      const beforeMuted = muted
+      muted = target
+      return {
+        ok: true,
+        data: {
+          ...delivered.data,
+          backend: 'api',
+          hotkey: '',
+          micState: muted ? 'muted' : 'unmuted',
+          beforeMuted,
+        },
+      }
+    },
+  })
+  assert.equal(await router.acquire(owner), undefined)
+  assert.equal(await router.release(owner), undefined)
+  assert.deepEqual(targets, [true, false])
+  assert.equal(muted, false)
+})
+
+test('API routing preserves an already-muted microphone after dictation', async () => {
+  const targets: boolean[] = []
+  const router = new VoiceMicRouter({
+    platform: 'darwin',
+    toggle: async () => {
+      throw Error('must not toggle')
+    },
+    setMuted: async target => {
+      targets.push(target)
+      return {
+        ok: true,
+        data: {
+          ...delivered.data,
+          backend: 'api',
+          hotkey: '',
+          micState: 'muted',
+          beforeMuted: true,
+        },
+      }
+    },
+  })
+  assert.equal(await router.acquire(owner), undefined)
+  assert.equal(await router.release(owner), undefined)
+  assert.deepEqual(targets, [true, true])
+})
+
+test('API routing refuses ASR entry or restoration when target state is not confirmed', async () => {
+  let calls = 0
+  const router = new VoiceMicRouter({
+    platform: 'darwin',
+    toggle: async () => {
+      throw Error('must not toggle')
+    },
+    setMuted: async () => {
+      calls++
+      return {
+        ok: true,
+        data: {
+          ...delivered.data,
+          backend: 'api',
+          hotkey: '',
+          micState: 'unmuted',
+          beforeMuted: false,
+        },
+      }
+    },
+  })
+  assert.equal((await router.acquire(owner))?.ok, false)
+  assert.equal(router.state().routeState, 'unknown')
+  assert.equal(calls, 1)
+})
+
+test('a confirmed API manual toggle remains usable without an assumed-open alignment', async () => {
+  const router = new VoiceMicRouter({
+    platform: 'darwin',
+    toggle: async () => ({
+      ok: true,
+      data: {
+        ...delivered.data,
+        backend: 'api',
+        hotkey: '',
+        micState: 'muted',
+        beforeMuted: false,
+      },
+    }),
+    setMuted: async () => ({
+      ok: true,
+      data: { ...delivered.data, backend: 'api', hotkey: '', micState: 'muted', beforeMuted: true },
+    }),
+  })
+  assert.equal((await router.manualToggle()).ok, true)
+  assert.equal(router.state().routeState, 'live')
+  assert.equal(await router.acquire(owner), undefined)
+})

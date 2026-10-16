@@ -2,7 +2,7 @@
   "name": "oba-live-tool-codex",
   "productName": "OBA-Codex",
   "type": "module",
-  "version": "1.6.7-voice.53",
+  "version": "1.6.7-voice.54",
   "private": true,
   "description": "直播工具，用于直播带货，能自动弹窗，自动发言",
   "author": "qiutongxue",

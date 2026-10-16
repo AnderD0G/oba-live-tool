@@ -10,6 +10,7 @@ type VoiceFailure = Extract<AssistantVoiceResult, { ok: false }>
 interface Options {
   platform?: string
   toggle: () => Promise<StudioMicHotkeyResult>
+  setMuted?: (muted: boolean) => Promise<StudioMicHotkeyResult>
   now?: () => number
   wait?: (ms: number) => Promise<void>
 }
@@ -18,6 +19,7 @@ interface Lease {
   active: boolean
   restored: boolean
   sentAt: number
+  beforeMuted?: boolean
 }
 const knownUnsent = new Set([
   'STUDIO_MIC_UNSUPPORTED_PLATFORM',
@@ -29,6 +31,8 @@ const knownUnsent = new Set([
   'STUDIO_MIC_BUSY',
   'STUDIO_MIC_COOLDOWN',
   'STUDIO_MIC_INVALID_COMMAND',
+  'STUDIO_MIC_API_BUSY',
+  'STUDIO_MIC_API_INVALID_COMMAND',
 ])
 function voiceFailure(code: string, message: string): VoiceFailure {
   return { ok: false, error: { code, message } }
@@ -36,7 +40,7 @@ function voiceFailure(code: string, message: string): VoiceFailure {
 const same = (a: VoiceMicOwner, b: VoiceMicOwner) =>
   a.accountId === b.accountId && a.rowId === b.rowId && a.sessionId === b.sessionId
 
-/** Expected routing from one fixed pair of events, never an observation of the live microphone. */
+/** One owner controls dictation; API routes restore the observed prior mute state. */
 export class VoiceMicRouter {
   private lease?: Lease
   private busy = false
@@ -56,7 +60,10 @@ export class VoiceMicRouter {
     if (this.busy || this.lease?.active)
       return {
         ok: false,
-        error: { code: 'STUDIO_MIC_VOICE_BUSY', message: '请先结束或取消豆包录音，再重新对齐' },
+        error: {
+          code: 'STUDIO_MIC_VOICE_BUSY',
+          message: '请先结束或取消豆包录音，再重新读取麦克风状态',
+        },
       }
     this.lease = undefined
     this.routeState = 'live'
@@ -68,19 +75,31 @@ export class VoiceMicRouter {
         ok: false,
         error: {
           code: 'STUDIO_MIC_VOICE_BUSY',
-          message: '豆包联动正在使用麦克风，或需要先恢复开麦并重新对齐',
+          message: this.options.setMuted
+            ? '请先结束豆包录音，或重新读取麦克风状态'
+            : '豆包联动正在使用麦克风，或需要先恢复开麦并重新对齐',
         },
       }
     this.busy = true
     try {
       const result = await this.options.toggle()
-      if (result.ok || !knownUnsent.has(result.error.code)) this.routeState = 'unknown'
+      if (result.ok) {
+        this.routeState =
+          result.data.backend === 'api' && ['muted', 'unmuted'].includes(result.data.micState)
+            ? 'live'
+            : 'unknown'
+      } else if (!knownUnsent.has(result.error.code)) this.routeState = 'unknown'
       return result
     } catch {
       this.routeState = 'unknown'
       return {
         ok: false,
-        error: { code: 'STUDIO_MIC_TIMEOUT', message: '热键结果未确认，请恢复 TK 开麦后重新对齐' },
+        error: {
+          code: this.options.setMuted ? 'STUDIO_MIC_API_TIMEOUT' : 'STUDIO_MIC_TIMEOUT',
+          message: this.options.setMuted
+            ? '麦克风结果未确认，请重新读取状态'
+            : '热键结果未确认，请恢复 TK 开麦后重新对齐',
+        },
       }
     } finally {
       this.busy = false
@@ -91,26 +110,53 @@ export class VoiceMicRouter {
     if (this.busy || this.lease || this.routeState !== 'live')
       return voiceFailure(
         'VOICE_MIC_BLOCKED',
-        '麦克风联动尚未就绪，请先结束录音或恢复 TK 开麦后重新对齐',
+        this.options.setMuted
+          ? '麦克风联动尚未就绪，请先结束录音或重新读取状态'
+          : '麦克风联动尚未就绪，请先结束录音或恢复 TK 开麦后重新对齐',
       )
     this.busy = true
     try {
-      const result = await this.options.toggle()
+      const result = await (this.options.setMuted
+        ? this.options.setMuted(true)
+        : this.options.toggle())
       if (!result.ok) {
         if (!knownUnsent.has(result.error.code)) this.routeState = 'unknown'
         return voiceFailure('VOICE_MIC_BLOCKED', result.error.message)
       }
-      this.lease = { owner: { ...owner }, active: true, restored: false, sentAt: this.now() }
+      if (
+        this.options.setMuted &&
+        (result.data.micState !== 'muted' || typeof result.data.beforeMuted !== 'boolean')
+      ) {
+        this.routeState = 'unknown'
+        return voiceFailure(
+          'VOICE_MIC_BLOCKED',
+          '直播麦克风静音未确认，豆包录音未开始；请重新读取状态',
+        )
+      }
+      this.lease = {
+        owner: { ...owner },
+        active: true,
+        restored: false,
+        sentAt: this.now(),
+        beforeMuted: result.data.beforeMuted,
+      }
       this.routeState = 'doubao'
     } catch {
       this.routeState = 'unknown'
       return voiceFailure(
         'VOICE_MIC_BLOCKED',
-        '热键操作结果未确认，豆包录音未开始；请恢复 TK 开麦后重新对齐',
+        this.options.setMuted
+          ? '麦克风操作结果未确认，豆包录音未开始；请重新读取状态'
+          : '热键操作结果未确认，豆包录音未开始；请恢复 TK 开麦后重新对齐',
       )
     } finally {
       this.busy = false
     }
+  }
+  private restoreMessage() {
+    return this.options.setMuted
+      ? '豆包录音已结束，直播麦克风恢复未确认；请重新读取麦克风状态'
+      : '豆包录音已结束，直播麦克风恢复未确认；请恢复 TK 开麦后重新对齐'
   }
   async release(owner: VoiceMicOwner): Promise<VoiceFailure | undefined> {
     if (!this.linked || !this.lease) return
@@ -118,28 +164,34 @@ export class VoiceMicRouter {
       return voiceFailure('VOICE_MIC_BLOCKED', '麦克风联动属于另一条录音')
     this.lease.active = false
     if (this.busy || this.lease.restored || this.routeState === 'unknown')
-      return voiceFailure('VOICE_MIC_RESTORE_FAILED', '豆包录音已结束；请恢复 TK 开麦后重新对齐')
+      return voiceFailure('VOICE_MIC_RESTORE_FAILED', this.restoreMessage())
     this.busy = true
     this.lease.restored = true
     try {
-      const remaining = Math.max(0, 1200 - (this.now() - this.lease.sentAt))
-      if (remaining) await this.wait(remaining)
-      const result = await this.options.toggle()
-      if (!result.ok) {
+      if (!this.options.setMuted) {
+        const remaining = Math.max(0, 1200 - (this.now() - this.lease.sentAt))
+        if (remaining) await this.wait(remaining)
+      }
+      const target = this.lease.beforeMuted
+      if (this.options.setMuted && typeof target !== 'boolean') {
         this.routeState = 'unknown'
-        return voiceFailure(
-          'VOICE_MIC_RESTORE_FAILED',
-          '豆包录音已结束，直播麦克风恢复未确认；请恢复 TK 开麦后重新对齐',
-        )
+        return voiceFailure('VOICE_MIC_RESTORE_FAILED', this.restoreMessage())
+      }
+      const result = await (this.options.setMuted
+        ? this.options.setMuted(target as boolean)
+        : this.options.toggle())
+      if (
+        !result.ok ||
+        (this.options.setMuted && result.data.micState !== (target ? 'muted' : 'unmuted'))
+      ) {
+        this.routeState = 'unknown'
+        return voiceFailure('VOICE_MIC_RESTORE_FAILED', this.restoreMessage())
       }
       this.lease = undefined
       this.routeState = 'live'
     } catch {
       this.routeState = 'unknown'
-      return voiceFailure(
-        'VOICE_MIC_RESTORE_FAILED',
-        '豆包录音已结束，直播麦克风恢复未确认；请恢复 TK 开麦后重新对齐',
-      )
+      return voiceFailure('VOICE_MIC_RESTORE_FAILED', this.restoreMessage())
     } finally {
       this.busy = false
     }

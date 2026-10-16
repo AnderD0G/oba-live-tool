@@ -1,27 +1,22 @@
-import path from 'node:path'
-import { app } from 'electron'
 import { IPC_CHANNELS } from '../../../shared/ipcChannels'
 import type { StudioMicHotkeyCommand, StudioMicHotkeyResult } from '../../../shared/studioMicHotkey'
-import { StudioMicHotkey } from '../services/StudioMicHotkey'
+import { StudioMicApi } from '../services/StudioMicApi'
 import { VoiceMicRouter } from '../services/VoiceMicRouter'
 import { typedIpcMainHandle } from '../utils/ipc'
 
-let service: StudioMicHotkey | undefined
+let service: StudioMicApi | undefined
 let router: VoiceMicRouter | undefined
 
-/** Desktop and phone share the same single-flight and cooldown boundary. */
-function rawStudioMicHotkey() {
-  if (service) return service
-  const helperPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'studio-mic-hotkey')
-    : path.join(app.getAppPath(), '.cache', 'native', 'studio-mic-hotkey')
-  service = new StudioMicHotkey({ helperPath })
+/** Desktop, phone and dictation share one API write boundary. No native fallback is automatic. */
+function studioMicApi() {
+  service ??= new StudioMicApi()
   return service
 }
 
 export function getVoiceMicRouter() {
   router ??= new VoiceMicRouter({
-    toggle: () => rawStudioMicHotkey().execute({ action: 'toggle' }),
+    toggle: () => studioMicApi().execute({ action: 'toggle' }),
+    setMuted: muted => studioMicApi().setMuted(muted),
   })
   return router
 }
@@ -38,14 +33,15 @@ const facade = {
         : undefined
     let result: StudioMicHotkeyResult
     if (action === 'align-open') {
+      result = await studioMicApi().execute({ action: 'status' })
+      if (!result.ok) return result
       const aligned = routing.alignOpen()
       if (!aligned.ok) return aligned
-      result = await rawStudioMicHotkey().execute({ action: 'status' })
-    } else
-      result =
-        action === 'toggle'
-          ? await routing.manualToggle()
-          : await rawStudioMicHotkey().execute(command)
+    } else if (action === 'toggle') result = await routing.manualToggle()
+    else if (action === 'request-access') {
+      // Kept for older renderers: the API needs no keyboard permission prompt.
+      result = await studioMicApi().execute({ action: 'status' })
+    } else result = await studioMicApi().execute(command)
     return result.ok ? { ok: true, data: { ...result.data, ...routing.state() } } : result
   },
 }

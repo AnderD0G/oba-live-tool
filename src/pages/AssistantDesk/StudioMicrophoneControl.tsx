@@ -1,10 +1,10 @@
-import { Keyboard, LoaderCircle, RefreshCw } from 'lucide-react'
+import { LoaderCircle, Mic, RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/ipcChannels'
 import type { StudioMicHotkeyCommand, StudioMicHotkeyState } from '../../../shared/studioMicHotkey'
 import { Button } from '@/components/ui/button'
 
-/** The displayed route follows sent hotkeys; it is not a Studio mute-state probe. */
+/** Desktop and phone use the same fixed local Studio microphone API and recording owner. */
 export function StudioMicrophoneControl() {
   const [state, setState] = useState<StudioMicHotkeyState>()
   const [pending, setPending] = useState(false)
@@ -34,7 +34,7 @@ export function StudioMicrophoneControl() {
     } catch {
       if (mounted.current) {
         setState(undefined)
-        setError('未能确认热键操作结果，请查看 TK Studio 麦克风状态；不要重复点击')
+        setError('麦克风控制结果未确认，请重新读取状态后再操作')
       }
     } finally {
       busy.current = false
@@ -60,29 +60,22 @@ export function StudioMicrophoneControl() {
     <section className="assistant-panel" aria-label="直播与豆包讲话切换">
       <div className="assistant-actions">
         <strong>讲话切换</strong>
-        {state?.linked && (
+        {state && (
           <span role="status" className="assistant-muted">
-            {state.routeState === 'doubao'
-              ? '正在豆包说话'
-              : state.routeState === 'unknown'
-                ? '联动等待重新对齐'
-                : '直播讲话'}
+            {state.routeState === 'unknown'
+              ? '等待重新读取状态'
+              : state.micState === 'muted'
+                ? state.routeState === 'doubao'
+                  ? '豆包说话 · TK 已闭麦'
+                  : 'TK 已闭麦'
+                : state.micState === 'unmuted'
+                  ? '直播讲话 · TK 已开麦'
+                  : '麦克风状态待确认'}
           </span>
-        )}
-        {state && !state.accessGranted && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() => void run('request-access')}
-          >
-            授权热键控制
-          </Button>
         )}
       </div>
       <p className="assistant-muted">
-        点击回复框的“语音输入”即可联动 TK 麦克风，结束或取消后切回直播讲话。
+        点击回复框的“语音输入”，先闭麦 TK 再开始豆包识别；结束或取消后恢复录音前的麦克风状态。
       </p>
       {state?.routeState === 'unknown' && (
         <Button
@@ -92,16 +85,15 @@ export function StudioMicrophoneControl() {
           disabled={pending}
           onClick={() => void run('align-open')}
         >
-          我已恢复 TK 开麦，重新对齐
+          重新读取麦克风状态
         </Button>
       )}
       <details>
-        <summary className="assistant-muted">热键设置和备用控制</summary>
+        <summary className="assistant-muted">麦克风连接和备用控制</summary>
         <p className="assistant-muted">
-          首次验收后按热键发送结果保持联动，无需逐次检查。起始保持 TK 开麦；使用中在 TK
-          手动改过静音时，请恢复开麦后重新对齐。
+          使用本机 TK 麦克风控制服务，无需键盘授权，也无需逐次检查界面。TK Studio
+          和本机控制服务须保持运行。
         </p>
-        <p className="assistant-muted">TK Studio“输入设备静音／取消静音”：Control + Option + M。</p>
         <div className="assistant-actions">
           <Button
             type="button"
@@ -112,7 +104,7 @@ export function StudioMicrophoneControl() {
             }
             onClick={() => void run('toggle')}
           >
-            {pending ? <LoaderCircle className="animate-spin" /> : <Keyboard />}手动切换 TK 麦克风
+            {pending ? <LoaderCircle className="animate-spin" /> : <Mic />}手动切换 TK 麦克风
           </Button>
           <Button
             type="button"
@@ -125,9 +117,7 @@ export function StudioMicrophoneControl() {
             检查连接
           </Button>
         </div>
-        <p className="assistant-muted">
-          备用按钮会改变联动起点；手动操作后恢复 TK 开麦并重新对齐。
-        </p>
+        <p className="assistant-muted">豆包录音期间会锁住备用按钮，避免两端同时切换。</p>
       </details>
       {(!state?.running || error) && (
         <p className="assistant-muted">
@@ -135,7 +125,7 @@ export function StudioMicrophoneControl() {
             ? '请先打开 TK Studio'
             : error
               ? '连接状态未确认，请重新检查'
-              : '正在检查热键控制…'}
+              : '正在连接麦克风控制服务…'}
         </p>
       )}
       {notice && (

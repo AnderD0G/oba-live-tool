@@ -1,12 +1,16 @@
-export type StudioMicHotkeyCommand = { action: 'status' | 'request-access' | 'toggle' | 'align-open' }
+export type StudioMicHotkeyCommand = {
+  action: 'status' | 'request-access' | 'toggle' | 'align-open'
+}
 
 export interface StudioMicHotkeyState {
   supported: boolean
   running: boolean
   accessGranted: boolean
   hotkey: string
-  /** A sent keyboard event cannot prove the broadcast microphone's state. */
-  micState: 'unknown'
+  /** Native hotkeys remain unknown; the local API returns its actual snapshot/acknowledgement. */
+  micState: 'muted' | 'unmuted' | 'unknown'
+  backend?: 'api' | 'hotkey'
+  beforeMuted?: boolean
   sent?: boolean
   message: string
   routeState?: 'live' | 'doubao' | 'unknown'
