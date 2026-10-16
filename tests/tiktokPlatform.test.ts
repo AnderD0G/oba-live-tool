@@ -26,6 +26,7 @@ test('maps a TikTok chat event into the shared live-comment shape', () => {
       nick_name: '买家一号',
       user_id: 'user-1',
       unique_id: 'buyer_01',
+      mention_handle: '@buyer_01',
       content: '011',
       time: 123456,
     },

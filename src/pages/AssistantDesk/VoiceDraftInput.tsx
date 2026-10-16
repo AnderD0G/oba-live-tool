@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AssistantVoiceCommand } from '../../../shared/assistantVoice'
 
-const noOwnerErrors = new Set(['VOICE_INVALID_COMMAND', 'VOICE_BUSY', 'VOICE_SERVICE_BUSY', 'VOICE_ALREADY_RECORDING', 'VOICE_NOT_OWNED', 'VOICE_NO_ACTIVE_SESSION', 'VOICE_ROW_NOT_FOUND', 'VOICE_NO_TEXT'])
+const noOwnerErrors = new Set(['VOICE_INVALID_COMMAND', 'VOICE_BUSY', 'VOICE_SERVICE_BUSY', 'VOICE_ALREADY_RECORDING', 'VOICE_NOT_OWNED', 'VOICE_NO_ACTIVE_SESSION', 'VOICE_ROW_NOT_FOUND', 'VOICE_NO_TEXT', 'VOICE_MIC_BLOCKED', 'VOICE_START_NOT_STARTED'])
 
 /** Dictation owns only its selected message and never saves or sends a reply. */
 export function VoiceDraftInput({ accountId, rowId, value, onChange, disabled = false }: {
@@ -66,12 +66,12 @@ export function VoiceDraftInput({ accountId, rowId, value, onChange, disabled = 
       }
       if (action === 'start') { setState('recording'); return }
       setState('idle')
-      if (action === 'cancel') { setNotice({ error: false, text: '已取消录音，中文草稿未改动' }); return }
+      if (action === 'cancel') { setNotice({ error: !!result.data.micWarning, text: result.data.micWarning ?? '已取消录音，中文草稿未改动' }); return }
       const text = result.data.text?.trim()
       if (!text || text.length > 1000) { setNotice({ error: true, text: '未取得有效识别文字，中文草稿已保留' }); return }
       if (latest.current.value === baseline.current) {
         latest.current.onChange(text)
-        setNotice({ error: false, text: '识别文字已填入中文草稿；核对后再翻译和发送' })
+        setNotice({ error: !!result.data.micWarning, text: result.data.micWarning ? `识别文字已填入中文草稿；${result.data.micWarning}` : '识别文字已填入中文草稿；核对后再翻译和发送' })
       } else {
         setRecognized(text)
         setNotice({ error: false, text: '录音期间草稿已修改，识别文字保留在下方，可追加到草稿' })
@@ -83,6 +83,7 @@ export function VoiceDraftInput({ accountId, rowId, value, onChange, disabled = 
         setNotice({ error: true, text: '语音操作结果尚未确认，中文草稿已保留；请取消本次录音后重试' })
       }
     } finally {
+      window.dispatchEvent(new CustomEvent('oba:voice-route-changed'))
       pendingRef.current = undefined
       if (mounted.current) setPending(undefined)
       else if (action !== 'cancel') cleanupOwned()

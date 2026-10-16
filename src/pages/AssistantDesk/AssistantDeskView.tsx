@@ -19,6 +19,7 @@ import type { AssistantReplyPolicy } from '../../../shared/assistantReplyPolicy'
 import { parseTikTokLiveTarget } from '../../../shared/platformSession'
 import { ContextPanel } from './ContextPanel'
 import { CameraControls } from './CameraControls'
+import { StudioMicrophoneControl } from './StudioMicrophoneControl'
 import { MobileDeskAccess } from './MobileDeskAccess'
 import { AudiencePolicyPanel } from './AudiencePolicyPanel'
 import { BrowserTranslationNotice } from './BrowserTranslationNotice'
@@ -205,6 +206,7 @@ export function AssistantDeskView({
       </header>
       <MobileDeskAccess accountId={accountId} accountName={accountName} />
       <CameraControls />
+      <StudioMicrophoneControl />
       <div className="assistant-stat-grid">
         <div className="assistant-stat">
           <Users size={18} />

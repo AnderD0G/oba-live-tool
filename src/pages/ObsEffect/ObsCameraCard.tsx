@@ -33,7 +33,7 @@ function selectedLabel(status?: ObsCameraStatus) {
       ? 'iPhone'
       : status.selected === 'both'
         ? '两个来源同时显示'
-        : '两个来源同时隐藏'
+        : '当前节目未选中机位'
 }
 
 export function ObsCameraCard() {
@@ -125,62 +125,105 @@ export function ObsCameraCard() {
       <CardHeader>
         <CardTitle>双机位切换</CardTitle>
         <CardDescription>
-          沿用下方保存的 OBS 连接，一键显示目标机位并隐藏另一机位。可直接使用，无需开启 AI。
+          沿用下方保存的 OBS 连接，切换节目机位并核对实际结果。可直接使用，无需开启 AI。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-3">
-          {(['sceneName', 'androidSource', 'iphoneSource'] as const).map((field, index) => (
-            <div key={field} className="space-y-2">
-              <Label htmlFor={`obs-camera-${field}`}>
-                {['场景名称', '安卓来源', 'iPhone 来源'][index]}
-              </Label>
-              <Input
-                id={`obs-camera-${field}`}
-                value={config[field]}
-                disabled={busy || !loaded}
-                onChange={event => update({ [field]: event.target.value })}
-              />
+        <div className="space-y-2">
+          <Label htmlFor="obs-camera-mode">机位布局</Label>
+          <Select
+            value={config.switchMode ?? 'source-visibility'}
+            disabled={busy || !loaded}
+            onValueChange={value => update({ switchMode: value as ObsCameraConfig['switchMode'] })}
+          >
+            <SelectTrigger id="obs-camera-mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="source-visibility">同一场景内的两个来源</SelectItem>
+              <SelectItem value="scene">两个独立的机位场景</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {config.switchMode === 'scene' ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            {(['androidSceneName', 'iphoneSceneName'] as const).map((field, index) => (
+              <div key={field} className="space-y-2">
+                <Label htmlFor={`obs-camera-${field}`}>
+                  {index === 0 ? '小米 / Android 场景' : 'iPhone 场景'}
+                </Label>
+                <Input
+                  id={`obs-camera-${field}`}
+                  value={config[field] ?? ''}
+                  disabled={busy || !loaded}
+                  placeholder={index === 0 ? '小米4K机位' : 'iPhone机位'}
+                  onChange={event => update({ [field]: event.target.value })}
+                />
+              </div>
+            ))}
+            <p className="text-sm text-muted-foreground md:col-span-2">
+              使用 OBS 当前设置的场景转场；不会更改来源、裁剪或停止相机。
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-4 md:grid-cols-3">
+              {(['sceneName', 'androidSource', 'iphoneSource'] as const).map((field, index) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={`obs-camera-${field}`}>
+                    {['场景名称', '安卓来源', 'iPhone 来源'][index]}
+                  </Label>
+                  <Input
+                    id={`obs-camera-${field}`}
+                    value={config[field]}
+                    disabled={busy || !loaded}
+                    onChange={event => update({ [field]: event.target.value })}
+                  />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="obs-camera-transition">切换方式</Label>
-            <Select
-              value={config.transitionMethod ?? 'cut'}
-              disabled={busy || !loaded}
-              onValueChange={value =>
-                update({ transitionMethod: value as ObsCameraConfig['transitionMethod'] })
-              }
-            >
-              <SelectTrigger id="obs-camera-transition">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="opacity-filter">淡入淡出</SelectItem>
-                <SelectItem value="cut">直接切换</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="obs-camera-duration">淡入淡出时长（毫秒）</Label>
-            <Input
-              id="obs-camera-duration"
-              type="number"
-              min={250}
-              max={1500}
-              step={50}
-              value={config.transitionMs ?? 450}
-              disabled={busy || !loaded || (config.transitionMethod ?? 'cut') === 'cut'}
-              onChange={event => update({ transitionMs: Number(event.target.value) })}
-            />
-          </div>
-        </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="obs-camera-transition">切换方式</Label>
+                <Select
+                  value={config.transitionMethod ?? 'cut'}
+                  disabled={busy || !loaded}
+                  onValueChange={value =>
+                    update({ transitionMethod: value as ObsCameraConfig['transitionMethod'] })
+                  }
+                >
+                  <SelectTrigger id="obs-camera-transition">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="opacity-filter">淡入淡出</SelectItem>
+                    <SelectItem value="cut">直接切换</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="obs-camera-duration">淡入淡出时长（毫秒）</Label>
+                <Input
+                  id="obs-camera-duration"
+                  type="number"
+                  min={250}
+                  max={1500}
+                  step={50}
+                  value={config.transitionMs ?? 450}
+                  disabled={busy || !loaded || (config.transitionMethod ?? 'cut') === 'cut'}
+                  onChange={event => update({ transitionMs: Number(event.target.value) })}
+                />
+              </div>
+            </div>
+          </>
+        )}
         <p className="text-sm">当前机位：{selectedLabel(status)}</p>
         {status?.onProgram === false && (
           <p className="text-sm text-amber-600">
-            当前节目场景为「{status.programScene}」。这里控制「{config.sceneName}」里的来源。
+            当前节目场景为「{status.programScene}」。
+            {config.switchMode === 'scene'
+              ? '请选择要输出的机位场景。'
+              : `这里控制「${config.sceneName}」里的来源。`}
           </p>
         )}
         {(error || configError) && (
@@ -208,7 +251,7 @@ export function ObsCameraCard() {
             disabled={busy || !loaded || dirty || !status?.ok}
             onClick={() => void run({ action: 'camera-switch', target: 'android' })}
           >
-            切到安卓
+            切到小米 / Android
           </Button>
           <Button
             disabled={busy || !loaded || dirty || !status?.ok}
@@ -224,7 +267,9 @@ export function ObsCameraCard() {
           </p>
         )}
         <p className="text-xs text-muted-foreground">
-          淡入淡出适用于该场景独立使用的机位来源，时长 250～1500 毫秒。
+          {config.switchMode === 'scene'
+            ? '独立场景切换沿用 OBS 当前转场设置。'
+            : '淡入淡出适用于该场景独立使用的机位来源，时长 250～1500 毫秒。'}
         </p>
       </CardContent>
     </Card>

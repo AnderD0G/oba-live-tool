@@ -3,6 +3,8 @@ import type { ProgressInfo, UpdateDownloadedEvent } from 'electron-updater'
 import type { AnalysisChanged, AnalysisCommand, AnalysisResponse } from './analysisRoom'
 import type { AssistantDeskCommand, AssistantDeskResult } from './assistantDesk'
 import type { AssistantVoiceCommand, AssistantVoiceResult } from './assistantVoice'
+import type { StudioMicHotkeyCommand, StudioMicHotkeyResult } from './studioMicHotkey'
+import type { XiaomiCameraCommand, XiaomiCameraResult } from './xiaomiCamera'
 import type { MobileAssistantAccessCommand, MobileAssistantAccessResult } from './mobileAssistantDesk'
 import type { EffectGroupCommand } from './effectGroups'
 import type { PlatformSessionCommand, PlatformSessionResult } from './platformSession'
@@ -27,6 +29,8 @@ import type { SetupAction, SetupResult } from './setup'
 export interface IpcChannels {
   [IPC_CHANNELS.assistantDesk.request]: (command:AssistantDeskCommand)=>Promise<AssistantDeskResult>
   [IPC_CHANNELS.assistantVoice.request]: (command:AssistantVoiceCommand)=>Promise<AssistantVoiceResult>
+  [IPC_CHANNELS.studioMicHotkey.request]: (command:StudioMicHotkeyCommand)=>Promise<StudioMicHotkeyResult>
+  [IPC_CHANNELS.xiaomiCamera.request]: (command:XiaomiCameraCommand)=>Promise<XiaomiCameraResult>
   [IPC_CHANNELS.assistantMobile.request]: (command:MobileAssistantAccessCommand)=>Promise<MobileAssistantAccessResult>
   [IPC_CHANNELS.effectGroups.request]: (command:EffectGroupCommand)=>Promise<AssistantDeskResult>
   [IPC_CHANNELS.platformSession.request]: (command:PlatformSessionCommand)=>Promise<PlatformSessionResult>

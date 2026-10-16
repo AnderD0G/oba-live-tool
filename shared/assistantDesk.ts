@@ -62,6 +62,12 @@ export interface AssistantReplyLanguageHint {
   language: string
   source: 'manual' | 'observed' | 'recent-viewer-comment' | 'nickname-hint' | 'default-english'
 }
+export interface AssistantTranslationFallback {
+  source: 'local' | 'browser'
+  method?: 'dictionary' | 'chrome'
+  language?: string
+  chinese: string
+}
 export interface AssistantDeskRow {
   id: string
   sessionId: string
@@ -96,7 +102,11 @@ export interface AssistantDeskRow {
   /** Reply drafting suggestion only; never source-language or country evidence. */
   replyLanguageHint?: AssistantReplyLanguageHint
   gift?: AssistantDeskGift
-  translation: { status: 'pending' | 'ready' | 'failed' | 'skipped' | 'interrupted' | 'missing'; source?: 'ai' | 'browser' | 'local'; method?: 'dictionary' | 'chrome'; language?: string; chinese?: string; error?: string }
+  translation: { status: 'pending' | 'ready' | 'failed' | 'skipped' | 'interrupted' | 'missing'; source?: 'ai' | 'browser' | 'local'; method?: 'dictionary' | 'chrome'; language?: string; chinese?: string; error?: string;
+    /** A usable same-row translation remains visible while the operator requests an AI supplement. */
+    fallback?: AssistantTranslationFallback;
+    manualAttempt?: { status: 'failed' | 'interrupted' | 'skipped'; message: string }
+  }
   localAbbreviations?: readonly { token: string; chineseMeaning: string }[]
   reply: { status: 'none' | 'queued' | 'generating' | 'review' | 'sending' | 'sent' | 'failed' | 'dismissed' | 'interrupted'; text?: string; chinese?: string; targetLanguage?: string; error?: string; contextRevision?: number; policyRevision?: number; ruleId?: string; sentAt?: number; requestId?: string; draftTranslation?: { status: 'pending' | 'ready' | 'failed'; requestId: string; error?: string } }
   ai?: { contextRevision: number; replyPolicyRevision?: number; model?: string; requestedAt?: number; completedAt?: number; evidence?: string[]; needsReview?: boolean }

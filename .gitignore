@@ -55,3 +55,4 @@ coverage/
 /artifacts/
 /.env.*
 /deploy/**/*.local.env
+/.cache/native/

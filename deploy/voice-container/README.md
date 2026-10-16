@@ -29,8 +29,10 @@ volume `oba-voice-poc_profile` preserves that login. No existing Chrome profile 
 copied. `down` preserves the volume; do not use `down -v` if the login is needed.
 
 For real use, open the Selkies sidebar and enable its microphone button, allowing
-microphone access in the local browser. This connection must remain open while
-speaking. On macOS, permit that local browser to use the microphone in System
+microphone access in the local browser. The optional Mac voice companion can
+hold this connection independently of ordinary Chrome tabs and enable forwarding
+when its connection is ready. This connection must remain open while speaking.
+On macOS, permit that local client to use the microphone in System
 Settings. The virtual input is then available to Doubao inside Chromium. Stop or
 cancel the recording through the normal voice API; closing the client is not a
 replacement for a confirmed stop.
@@ -69,4 +71,13 @@ Official sources:
 
 `SELKIES_AUDIO_ENABLED=true` is required even when only sending a microphone.
 `SELKIES_AUDIO_ON_START=false` leaves output streaming off without disabling
-microphone forwarding. Physical microphone capture is off on initial connection.
+microphone forwarding. The pinned image does not implement
+`SELKIES_MICROPHONE_ON_START`; the Mac companion uses the supported page protocol
+instead. Enabling forwarding does not start Doubao recording.
+
+Mac arm64 compatibility note (2026-10-16): the newer image index
+`sha256:9761e4dce2375165ab85566d5a58920525d49c49469ed7a08a6d874dcdb1cedc`
+includes demand mode but its Selkies executable exited with signal 4 / code 132
+on the tested Docker host, before Chromium started. Keep the verified pinned
+image above until a candidate passes an actual runtime test, not just an image
+manifest architecture check. A cold profile backup was retained locally.

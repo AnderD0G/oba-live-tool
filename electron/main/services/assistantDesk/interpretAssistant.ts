@@ -1,4 +1,4 @@
-import { isLanguageLabelTranslation, normalizeTranslationLanguage } from './translationQuality'
+import { AssistantTranslationError, classifyAiCommentTranslation, normalizeTranslationLanguage } from './translationQuality'
 
 interface AssistantMessage { role: 'system' | 'user'; content: string }
 interface InterpretationInput {
@@ -53,7 +53,8 @@ function translatedComment(input: InterpretationInput, language: string, value: 
   if (!input.controlledContext.translationEnabled) return ''
   if (/^zh(?:-|$)/i.test(language) && /\p{Script=Han}/u.test(original) && !/[^\p{Script=Han}\p{N}\p{P}\p{S}\s]/u.test(original)) return original
   if (!value.trim()) invalid()
-  if (isLanguageLabelTranslation(original, language, value)) invalid()
+  const quality = classifyAiCommentTranslation(original, language, value)
+  if (quality.status === 'failed') throw new AssistantTranslationError(quality.error)
   return value
 }
 

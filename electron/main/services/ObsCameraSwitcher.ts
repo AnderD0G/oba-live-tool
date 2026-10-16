@@ -51,6 +51,73 @@ export class ObsCameraSwitcher {
     return result
   }
 
+  private async readSceneStatus(): Promise<ObsCameraStatus> {
+    if (this.stopped) throw new Error('机位控制已停止')
+    validateObsCameraConfig(this.config)
+    await this.client.connect(this.connection.url, this.connection.password)
+    const list = await this.client.call('GetSceneList')
+    if (!Array.isArray(list.scenes)) throw new Error('OBS 未返回场景列表')
+    for (const name of [this.config.androidSceneName, this.config.iphoneSceneName]) {
+      if (
+        list.scenes.filter(scene => scene && typeof scene === 'object' && scene.sceneName === name)
+          .length !== 1
+      )
+        throw new Error(`OBS 中找不到唯一的机位场景「${name}」`)
+    }
+    const program = await this.client.call('GetCurrentProgramScene')
+    if (typeof program.currentProgramSceneName !== 'string' || !program.currentProgramSceneName)
+      throw new Error('OBS 未确认当前节目场景')
+    const programScene = program.currentProgramSceneName
+    const selected =
+      programScene === this.config.androidSceneName
+        ? 'android'
+        : programScene === this.config.iphoneSceneName
+          ? 'iphone'
+          : 'none'
+    this.cached = { ok: true, selected, onProgram: selected !== 'none', programScene }
+    this.checkedAt = Date.now()
+    return this.cached
+  }
+
+  private async switchScene(target: ObsCameraTarget): Promise<ObsCameraStatus> {
+    let before: ObsCameraStatus | undefined
+    try {
+      if (this.stopping || this.stopped) throw new Error('机位控制已停止')
+      if (target !== 'android' && target !== 'iphone') throw new Error('无效机位')
+      before = await this.readSceneStatus()
+      if (before.selected !== target)
+        await this.client.call('SetCurrentProgramScene', {
+          sceneName:
+            target === 'android' ? this.config.androidSceneName : this.config.iphoneSceneName,
+        })
+      const after = await this.readSceneStatus()
+      if (after.selected !== target) throw new Error('OBS 未确认目标节目场景，请检查现场画面')
+      this.report({
+        target,
+        ok: true,
+        before,
+        after,
+        transitionMethod: 'obs-scene',
+        transitionMs: 0,
+      })
+      return after
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'OBS 场景切换失败'
+      this.cached = { ok: false, error: message }
+      this.checkedAt = 0
+      this.report({
+        target,
+        ok: false,
+        before,
+        transitionMethod: 'obs-scene',
+        transitionMs: 0,
+        error: message,
+      })
+      // A timeout can happen after OBS accepted the command. Do not send a blind rollback.
+      throw error
+    }
+  }
+
   private async read(): Promise<{
     android: SceneItem
     iphone: SceneItem
@@ -108,7 +175,9 @@ export class ObsCameraSwitcher {
     return this.enqueue(async () => {
       if (!force && Date.now() - this.checkedAt < 2000) return this.cached
       try {
-        return (await this.read()).status
+        return this.config.switchMode === 'scene'
+          ? await this.readSceneStatus()
+          : (await this.read()).status
       } catch (error) {
         this.cached = {
           ok: false,
@@ -199,6 +268,7 @@ export class ObsCameraSwitcher {
   switchTo(target: ObsCameraTarget) {
     if (this.stopping || this.stopped) return Promise.reject(new Error('机位控制已停止'))
     return this.enqueue(async () => {
+      if (this.config.switchMode === 'scene') return this.switchScene(target)
       const transitionMethod = this.config.transitionMethod ?? 'cut'
       const transitionMs = transitionMethod === 'cut' ? 0 : (this.config.transitionMs ?? 450)
       let before: Awaited<ReturnType<ObsCameraSwitcher['read']>> | undefined

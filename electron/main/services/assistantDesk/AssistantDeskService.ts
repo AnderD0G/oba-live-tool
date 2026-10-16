@@ -21,7 +21,7 @@ import { tikTokRoomSnapshot } from '../../platforms/tiktok/presence'
 import { AssistantDeskJournal, type AssistantDeskJournalRecord } from './AssistantDeskJournal'
 import { MessageBatchIndex } from './MessageBatchIndex'
 import { AssistantDeskDerivedIndex, type DerivedMap, type DerivedSet } from './AssistantDeskDerivedIndex'
-import { isLanguageLabelTranslation, LANGUAGE_LABEL_TRANSLATION_ERROR, normalizeTranslationLanguage, validateStoredTranslation } from './translationQuality'
+import { AssistantTranslationError, captureTranslationFallback, classifyAiCommentTranslation, isLanguageLabelTranslation, normalizeTranslationLanguage, restoreTranslationFallback, validateStoredTranslation } from './translationQuality'
 import type { BrowserTranslationObservation } from '../../../../shared/browserTranslation'
 import { BrowserTranslationMatcher, localAbbreviations, type TranslationDecision } from './BrowserTranslationMatcher'
 import { BrowserTranslationHealth } from './BrowserTranslationHealth'
@@ -88,7 +88,7 @@ function optionalId(value: unknown): string | undefined {
 function cleanNickname(value: unknown): string { return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f@]/g, '').trim().slice(0, 100) : '' }
 function defaults(): AssistantDeskContext { return { revision: 1, knowledge: '', instructions: '', replyMode: 'off', translationEnabled: true, aiRequestLimit: 30, goldLevel: 10, priorityGold: false, aiPaused: false, localEffectsEnabled: false, attentionMaxAgeSeconds: 600 } }
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) }
-function publicError(error: unknown, fallback = '助播操作失败；请检查连接与存储状态'): string { return error instanceof DeskError ? error.message : fallback }
+function publicError(error: unknown, fallback = '助播操作失败；请检查连接与存储状态'): string { return error instanceof DeskError || error instanceof AssistantTranslationError ? error.message : fallback }
 interface RequestEntry { key: string; accountId: string; action: string; requestId: string; data: unknown; status: 'pending' | 'done' | 'failed' | 'interrupted'; fingerprint: string }
 interface AiJob { accountId: string; sessionId: string; rowId: string; row: AssistantDeskRow; context: AssistantDeskContext; generation: number; controller: AbortController; replyRule?: AssistantReplyRule; replyPolicyRevision?: number; manualReply?: boolean }
 interface DraftTranslationJob { accountId: string; sessionId: string; rowId: string; rowVersion: number; generation: number; contextRevision: number; controller: AbortController }
@@ -778,6 +778,10 @@ export class AssistantDeskService {
     const append = async () => {
       if (guard && !guard()) fail('REPLY_CHANGED', '这条消息或草稿已更新，请重新加载')
       let saved = clone(data)
+      if (type === 'row') {
+        const incoming = saved as AssistantDeskRow
+        incoming.translation = restoreTranslationFallback(incoming.translation)
+      }
       if (type === 'row' && translationUpdate) {
         const incoming = saved as AssistantDeskRow
         const latest = (this.rows.get(accountId) ?? []).find(row => row.id === incoming.id) ?? await this.row(accountId, incoming.id)
@@ -1249,7 +1253,8 @@ export class AssistantDeskService {
       contextRevision: this.context(accountId).revision, controller: new AbortController() }
     // Clear/stop must own cancellation while quota persistence is still awaiting journal I/O.
     this.manualCommentTranslations.set(rowId, job)
-    const translation: AssistantDeskRow['translation'] = { status: 'pending', source: 'ai' }
+    const fallback = captureTranslationFallback(row.translation)
+    const translation: AssistantDeskRow['translation'] = { status: 'pending', source: 'ai', ...(fallback ? { fallback } : {}) }
     try {
       await this.reserveAiRequest(accountId, session.id)
       if (!this.validManualCommentTranslation(job) || version !== this.rowVersions.get(rowId) || !this.attentionPins.get(accountId)?.has(rowId)) fail('AI_INTERRUPTED', '人工翻译已取消，请处理当前待处理评论')
@@ -1295,11 +1300,12 @@ export class AssistantDeskService {
       const output = JSON.parse(raw.replace(/^\s*```(?:json)?\s*/, '').replace(/\s*```\s*$/, ''))
       if (!output || typeof output !== 'object' || Array.isArray(output)) fail('INVALID_TRANSLATION', '人工翻译输出格式无效')
       const chinese = text(output.chinese, 8000, '中文译文', false).trim()
-      if (!/\p{Script=Han}/u.test(chinese) || isLanguageLabelTranslation(row.original, output.language, chinese)) fail('INVALID_TRANSLATION', LANGUAGE_LABEL_TRANSLATION_ERROR)
+      const quality = classifyAiCommentTranslation(row.original, output.language, chinese)
+      if (quality.status === 'failed') fail('INVALID_TRANSLATION', quality.error)
       const latest = await this.row(job.accountId, job.rowId)
       this.requireCurrentAttention(latest)
       if (!this.currentAttentionWindow(latest) || ['sending', 'sent', 'dismissed'].includes(latest.reply.status)) fail('AI_INTERRUPTED', '评论已归档或完成回复，人工翻译已取消')
-      const translation: AssistantDeskRow['translation'] = { status: 'ready', source: 'ai', chinese, ...(normalizeTranslationLanguage(output.language) ? { language: normalizeTranslationLanguage(output.language) } : {}) }
+      const translation = restoreTranslationFallback({ ...quality, ...(quality.status === 'skipped' && latest.translation.fallback ? { fallback: latest.translation.fallback } : {}) })
       await this.persist('row', job.accountId, { ...latest, translation }, () => this.validManualCommentTranslation(job) && this.currentAttention(latest) && this.currentAttentionWindow(latest), true)
       this.rememberBrowserTranslation(job.rowId, translation)
       await this.admitReplyAfterEnrichment(job.accountId, job.rowId)
@@ -1308,8 +1314,9 @@ export class AssistantDeskService {
       const row = await this.row(job.accountId, job.rowId)
       if (row.translation.status !== 'pending' || row.translation.source !== 'ai') return
       const expired = !this.currentAttention(row) || !this.currentAttentionWindow(row) || ['sending', 'sent', 'dismissed'].includes(row.reply.status)
-      const translation: AssistantDeskRow['translation'] = { status: expired || job.controller.signal.aborted && !timedOut ? 'interrupted' : 'failed', source: 'ai',
-        error: expired ? '评论已过期、归档或完成回复，人工翻译已取消' : publicError(error, '人工翻译失败或输出格式无效，请检查模型连接后重试') }
+      const translation = restoreTranslationFallback({ status: expired || job.controller.signal.aborted && !timedOut ? 'interrupted' : 'failed', source: 'ai',
+        ...(row.translation.fallback ? { fallback: row.translation.fallback } : {}),
+        error: expired ? '评论已过期、归档或完成回复，人工翻译已取消' : publicError(error, '人工翻译失败或输出格式无效，请检查模型连接后重试') })
       await this.persist('row', job.accountId, { ...row, translation }, () => this.validManualCommentTranslation(job, true), true)
       this.rememberBrowserTranslation(job.rowId, translation)
     } finally { if (timeout) clearTimeout(timeout); removeAbort?.() }
@@ -2036,8 +2043,8 @@ export class AssistantDeskService {
       const output = JSON.parse(raw.replace(/^\s*```(?:json)?\s*/, '').replace(/\s*```\s*$/, ''))
       if (!output || typeof output !== 'object' || Array.isArray(output) || (job.context.translationEnabled && typeof output.chinese !== 'string') || (output.reply !== undefined && typeof output.reply !== 'string') || (output.needsReview !== undefined && typeof output.needsReview !== 'boolean')) throw new Error('AI输出格式无效')
       const chinese = text(output.chinese ?? '', 8000, '中文译文')
-      if (job.context.translationEnabled && isLanguageLabelTranslation(row.original, output.language, chinese))
-        fail('INVALID_TRANSLATION', LANGUAGE_LABEL_TRANSLATION_ERROR)
+      const quality = job.context.translationEnabled ? classifyAiCommentTranslation(row.original, output.language, chinese) : undefined
+      if (quality?.status === 'failed') fail('INVALID_TRANSLATION', quality.error)
       const reply = text(output.reply ?? '', 1000, '回复草稿').trim()
       const evidence = Array.isArray(output.evidence) ? output.evidence.filter((v: unknown) => typeof v === 'string').slice(0, 20).map((v: string) => v.slice(0, 200)) : []
       const supported = evidence.length > 0 && evidence.every((value: string) => value.trim().length > 0 && job.context.knowledge.includes(value.trim()))
@@ -2045,7 +2052,7 @@ export class AssistantDeskService {
       const outputLanguage = normalizeTranslationLanguage(output.language)
       const replyLanguage = !job.context.translationEnabled && row.kind === 'comment' ? outputLanguage : undefined
       const targetLanguage = job.replyRule ? row.kind === 'comment' ? outputLanguage ?? languageHint?.language : languageHint?.language : undefined
-      row = { ...row, translation: job.context.translationEnabled ? { status: 'ready', language: typeof output.language === 'string' ? output.language.slice(0, 100) : undefined, chinese } : { ...row.translation, ...(!row.translation.language && replyLanguage ? { language: replyLanguage } : {}) }, reply: { ...row.reply, ...(targetLanguage ? { targetLanguage } : {}), status: job.context.replyMode === 'off' || !reply ? 'none' : 'review', text: job.context.replyMode === 'off' ? undefined : reply, chinese: job.context.replyMode === 'off' ? undefined : typeof output.replyChinese === 'string' ? output.replyChinese.slice(0, 8000) : undefined }, ai: { ...row.ai!, completedAt: this.now(), needsReview, evidence } }
+      row = { ...row, translation: quality ?? { ...row.translation, ...(!row.translation.language && replyLanguage ? { language: replyLanguage } : {}) }, reply: { ...row.reply, ...(targetLanguage ? { targetLanguage } : {}), status: job.context.replyMode === 'off' || !reply ? 'none' : 'review', text: job.context.replyMode === 'off' ? undefined : reply, chinese: job.context.replyMode === 'off' ? undefined : typeof output.replyChinese === 'string' ? output.replyChinese.slice(0, 8000) : undefined }, ai: { ...row.ai!, completedAt: this.now(), needsReview, evidence } }
       await this.persist('row', job.accountId, row, () => this.valid(job), false, true)
       if (!job.replyRule) await this.admitReplyAfterEnrichment(job.accountId, row.id)
       if (job.context.replyMode === 'auto' && !job.manualReply && reply && !needsReview && this.valid(job)) await this.sendRow(row, job)
@@ -2097,7 +2104,8 @@ export class AssistantDeskService {
     for (const job of cancelledManual) {
       const row = await this.row(accountId, job.rowId)
       if (row.translation.status !== 'pending' || row.translation.source !== 'ai') continue
-      const translation: AssistantDeskRow['translation'] = { status: 'interrupted', source: 'ai', error: reason }
+      const translation = restoreTranslationFallback({ status: 'interrupted', source: 'ai', error: reason,
+        ...(row.translation.fallback ? { fallback: row.translation.fallback } : {}) })
       await this.persist('row', accountId, { ...row, translation }, undefined, true)
       this.rememberBrowserTranslation(row.id, translation)
     }

@@ -3,6 +3,8 @@ export const IPC_CHANNELS = {
   assistantDesk: { request: 'assistant-desk:request' },
   assistantMobile: { request: 'assistant-mobile:request' },
   assistantVoice: { request: 'assistant-voice:request' },
+  studioMicHotkey: { request: 'studio-mic-hotkey:request' },
+  xiaomiCamera: { request: 'xiaomi-camera:request' },
   platformSession: { request: 'platform-session:request' },
   audit: { list: 'audit:list' },
   analysisRoom: { request: 'analysisRoom:request', changed: 'analysisRoom:changed' },

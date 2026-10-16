@@ -9,6 +9,9 @@ import { typedIpcMainHandle } from '../utils/ipc'
 import { executeAssistantDeskCommand, executeAssistantVoiceScene } from './assistantDesk'
 import { getAssistantVoice } from './assistantVoice'
 import { registerAnalysisShutdown } from './analysisRoom'
+import { executeObsEffectCommand } from './obsEffect'
+import { getStudioMicHotkey } from './studioMicHotkey'
+import { executeXiaomiCameraCommand } from './xiaomiCamera'
 
 export function setupAssistantMobileIpc() {
   const diagnostics = createAssistantDiagnostics(join(app.getPath('userData'), 'logs'))
@@ -22,6 +25,10 @@ export function setupAssistantMobileIpc() {
       voiceScene: executeAssistantVoiceScene,
       trace: diagnostics.trace,
       voice: command => getAssistantVoice().execute(command),
+      camera: command => executeObsEffectCommand(command.action === 'status'
+        ? { action: 'camera-status' } : { action: 'camera-switch', target: command.target }),
+      studioMic: command => getStudioMicHotkey().execute(command),
+      xiaomi: executeXiaomiCameraCommand,
     }),
   })
   typedIpcMainHandle(IPC_CHANNELS.assistantMobile.request, (_event, command) =>
@@ -29,4 +36,3 @@ export function setupAssistantMobileIpc() {
   registerAnalysisShutdown(async () => { try { await manager.dispose() } finally { await diagnostics.flush() } })
   app.once('before-quit', () => { void manager.dispose().catch(() => {}) })
 }
-

@@ -203,7 +203,7 @@ const ENDPOINTS: Handler[] = [
   { method: 'GET', path: '/obs/camera', summary: '读取双机位配置、实际可见状态及是否位于节目场景' },
   { method: 'GET', path: OBS_INSTANT_PRESENTATION, summary: '读取即时互动展示模式和跟随机位设置，不触发互动' },
   { method: 'PUT', path: OBS_INSTANT_PRESENTATION, summary: '保存即时互动宽景或聚焦模式及跟随机位开关', body: '{mode:"wide"|"focus",followCamera:boolean}' },
-  { method: 'PUT', path: '/obs/camera', summary: '校验并保存双机位场景、来源与过渡配置', body: '{config:{sceneName,androidSource,iphoneSource,transitionMethod?,transitionMs?}}' },
+  { method: 'PUT', path: '/obs/camera', summary: '校验并保存双机位；支持同场景来源或两个独立节目场景', body: '{config:{sceneName,androidSource,iphoneSource,switchMode?:"source-visibility"|"scene",androidSceneName?,iphoneSceneName?,transitionMethod?,transitionMs?}}' },
   { method: 'POST', path: '/obs/camera/switch', summary: '切换到已配置的安卓或 iPhone 机位，返回实际执行结果', body: '{target:"android"|"iphone"}' },
 ]
 
@@ -587,7 +587,7 @@ export class DirectorApiServer {
               if (Object.keys(body).some(key => key !== 'config'))
                 throw new ApiError('机位保存只接受 config')
               const config = requireObject(body.config, 'config')
-              if (Object.keys(config).some(key => !['sceneName', 'androidSource', 'iphoneSource', 'transitionMethod', 'transitionMs'].includes(key)))
+              if (Object.keys(config).some(key => !['sceneName', 'androidSource', 'iphoneSource', 'transitionMethod', 'transitionMs', 'switchMode', 'androidSceneName', 'iphoneSceneName'].includes(key)))
                 throw new ApiError('机位配置包含未知字段')
               validateObsCameraConfig(config as unknown as ObsCameraConfig)
               command = { action: 'camera-save', config: config as unknown as ObsCameraConfig }

@@ -6,5 +6,5 @@ export interface AssistantVoiceCommand {
 }
 
 export type AssistantVoiceResult =
-  | { ok: true; data: { status: 'recording' | 'stopped' | 'cancelled'; rowId: string; text?: string } }
+  | { ok: true; data: { status: 'recording' | 'stopped' | 'cancelled'; rowId: string; text?: string; micWarning?: string; routeState?: 'live' | 'doubao' | 'unknown' } }
   | { ok: false; error: { code: string; message: string } }

@@ -25,6 +25,7 @@ function createMacDesktopBuildRequest({ platform, hostArch, args, root, version,
     const from = typeof resource === 'string' ? resource : resource.from
     return resource.to !== 'codex' && !/^vendor-build\/codex(?:\/|$)/.test(String(from).replaceAll('\\', '/'))
   })
+  config.extraResources.push({ from: path.join(root, '.cache', 'native', 'studio-mic-hotkey'), to: 'studio-mic-hotkey' })
   config.mac = { ...config.mac, identity: null, target: [{ target, arch: [arch] }] }
   return { arch, target, config, publish: 'never' }
 }
@@ -39,6 +40,7 @@ async function main() {
     args: process.argv.slice(2), root, version: pkg.version, baseConfig })
   if (fs.existsSync(request.config.directories.output)) throw new Error('MAC_BUILD_OUTPUT_EXISTS: preserve the existing app and choose a fresh release directory')
   const run = (script, args = []) => execFileSync(process.execPath, [script, ...args], { cwd: root, stdio: 'inherit' })
+  run(path.join(root, 'scripts', 'build-studio-mic-hotkey.cjs'), ['--arch', request.arch])
   run(require.resolve('typescript/bin/tsc'), ['--noEmit'])
   run(path.join(path.dirname(require.resolve('vite/package.json')), 'bin/vite.js'), ['build'])
   const { build, Platform, Arch } = require('electron-builder')

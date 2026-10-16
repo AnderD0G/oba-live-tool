@@ -103,30 +103,33 @@ export function AssistantMessageCard({
   const previewLanguage = translatedLanguage?.owner === owner ? translatedLanguage.language :
     normalizeMessageLanguage(row.reply.targetLanguage) ?? normalizeMessageLanguage(row.translation.language) ?? automaticTargetLanguage
   const retryPending = useRef(false)
+  const localIdentity = JSON.stringify(translationIdentityFields.map(key => row[key]))
   const [retry, setRetry] = useState<{
-    owner: string
+    identity: string
     baseline: string
     pending: boolean
     translation: Row['translation']
     error?: string
   }>()
-  const currentRetry = retry?.owner === owner ? retry : undefined
-  const localIdentity = JSON.stringify(translationIdentityFields.map(key => row[key]))
+  const currentRetry = retry?.identity === localIdentity ? retry : undefined
   const [retainedLocal, setRetainedLocal] = useState<{
     identity: string
     value: Pick<Row, 'translation' | 'ai'>
   }>()
   const retained = row.translation.source === 'local' && retainedLocal?.identity === localIdentity ? retainedLocal.value : undefined
   const localBase = retained ?? row
-  const matchingLocalUpdate = row.translation.source === 'local' && manualTranslationUpdate &&
+  const matchingUpdate = manualTranslationUpdate &&
     translationIdentityFields.every(key => manualTranslationUpdate[key] === row[key])
-  const candidate = matchingLocalUpdate ? manualTranslationUpdate : undefined
+  const candidate = row.translation.source === 'local' && matchingUpdate ? manualTranslationUpdate : undefined
   const acceptCandidate = candidate && (
     (candidate.translation.source === 'ai' &&
       (localBase.translation.source !== 'ai' || localBase.translation.status !== 'ready' ||
-        ['ready', 'interrupted'].includes(candidate.translation.status) || !!currentRetry?.pending)) ||
-    (candidate.translation.source === 'local' && localBase.translation.source !== 'ai' &&
-      (candidate.translation.status === 'interrupted' || !['ready', 'interrupted'].includes(localBase.translation.status)))
+        candidate.translation.status === 'ready' || !!currentRetry?.pending)) ||
+    (candidate.translation.source === 'local' &&
+      ((!!candidate.translation.manualAttempt &&
+        (localBase.translation.source !== 'ai' || localBase.translation.status !== 'ready' || !!currentRetry?.pending)) ||
+        (localBase.translation.source !== 'ai' &&
+          (candidate.translation.status === 'interrupted' || !['ready', 'interrupted'].includes(localBase.translation.status)))))
   )
   const localUpdate = acceptCandidate ? candidate : localBase
   if (row.translation.source === 'local' &&
@@ -137,13 +140,19 @@ export function AssistantMessageCard({
   } else if (retainedLocal && (retainedLocal.identity !== localIdentity || row.translation.source !== 'local')) {
     setRetainedLocal(undefined)
   }
-  const translationUpdate = currentRetry && row.translation.source !== 'local' ? manualTranslationUpdate ?? row : localUpdate
+  const translationUpdate = currentRetry && row.translation.source !== 'local'
+    ? (matchingUpdate ? manualTranslationUpdate : row)
+    : localUpdate
   const translationRevision = JSON.stringify([translationUpdate.translation, translationUpdate.ai?.requestedAt, translationUpdate.ai?.completedAt])
   const translation =
     currentRetry && (currentRetry.pending || currentRetry.baseline === translationRevision)
       ? currentRetry.translation
       : translationUpdate.translation
-  const originalLanguage = row.translation.source === 'local' ? translation.language : row.translation.language
+  const visibleTranslation = translation.status === 'pending' && translation.fallback
+    ? { status: 'ready' as const, ...translation.fallback }
+    : translation
+  const retainedOriginal = translation.status === 'skipped' && translation.source === 'ai' && translation.language === 'und'
+  const originalLanguage = (row.translation.source === 'local' ? translation.language : row.translation.language) ?? translation.fallback?.language
   const retryUnavailable = manualTranslation
     ? !manualTranslation.sessionId || row.sessionId !== manualTranslation.sessionId
       ? '场次已结束'
@@ -161,24 +170,27 @@ export function AssistantMessageCard({
     if (retryPending.current || retryUnavailable || translation.status === 'pending') return
     retryPending.current = true
     const baseline = translationRevision
-    setRetry({ owner, baseline, pending: true, translation: { status: 'pending', source: 'ai', language: row.translation.language } })
+    const fallback = translation.status === 'ready' && ['local', 'browser'].includes(translation.source ?? '') && translation.chinese?.trim()
+      ? { source: translation.source as 'local' | 'browser', method: translation.method, language: translation.language, chinese: translation.chinese }
+      : translation.fallback
+    setRetry({ identity: localIdentity, baseline, pending: true, translation: { status: 'pending', source: 'ai', language: translation.language, ...(fallback ? { fallback } : {}) } })
     try {
       const result = await request({ action: 'translate-retry', params: { accountId: row.accountId, rowId: row.id } })
-      const returned = result.ok ? result.data as Row | undefined : undefined
-      if (row.translation.source === 'local' && returned?.translation.source === 'ai' &&
-        returned.translation.status !== 'pending' && translationIdentityFields.every(key => returned[key] === row[key])) {
+      const data = result.ok ? result.data as Row | undefined : undefined
+      const returned = data && translationIdentityFields.every(key => data[key] === row[key]) ? data : undefined
+      if (row.translation.source === 'local' && returned &&
+        (returned.translation.source === 'ai' || !!returned.translation.manualAttempt) &&
+        returned.translation.status !== 'pending') {
         // Exact final manual responses remain authoritative even after both bounded snapshots omit this row.
         setRetainedLocal({ identity: localIdentity, value: { translation: returned.translation, ai: returned.ai } })
       }
       setRetry({
-        owner, baseline, pending: false,
-        translation: returned?.accountId === row.accountId && returned.id === row.id && returned.translation
-          ? returned.translation
-          : row.translation,
+        identity: localIdentity, baseline, pending: false,
+        translation: returned?.translation ?? translation,
         error: result.ok ? undefined : result.error.message,
       })
     } catch {
-      setRetry({ owner, baseline, pending: false, translation: row.translation, error: '翻译请求失败，请重试；原文已保留' })
+      setRetry({ identity: localIdentity, baseline, pending: false, translation, error: '翻译请求失败，请重试；原文已保留' })
     } finally {
       retryPending.current = false
     }
@@ -400,38 +412,50 @@ export function AssistantMessageCard({
           )}
         </section>
         <section
-          className={translation.status === 'ready' ? 'assistant-translation-ready' : ''}
+          className={visibleTranslation.status === 'ready' ? 'assistant-translation-ready' : ''}
         >
-          <span className="assistant-field-label">中文译文{translation.source === 'local' ? translation.status === 'ready' && translation.method === 'dictionary' ? ' · 本地词表' : ' · Chrome 本地译文' : translation.source === 'browser' ? ' · 网页译文' : translation.status === 'ready' || translation.source === 'ai' ? ' · AI译文' : ''}</span>
-          {translation.status === 'pending' ? (
+          <span className="assistant-field-label">{retainedOriginal ? '翻译说明' : <>中文译文{visibleTranslation.source === 'local' ? visibleTranslation.status === 'ready' && visibleTranslation.method === 'dictionary' ? ' · 本地词表' : ' · Chrome 本地译文' : visibleTranslation.source === 'browser' ? ' · 网页译文' : visibleTranslation.status === 'ready' ? ' · AI译文' : ''}</>}</span>
+          {visibleTranslation.status === 'ready' ? (
+            <p className="assistant-translation-text whitespace-pre-wrap break-words">
+              <FlagText text={visibleTranslation.chinese || '无译文'} />
+            </p>
+          ) : translation.status !== 'pending' ? (
+            <p className="assistant-muted">
+              {retainedOriginal
+                ? translation.error || '含义不明确，保留原文'
+                : translation.source === 'local'
+                  ? `Chrome 本地翻译未完成：${translation.error || '尚无可用译文，原文已保留'}`
+                  : translation.status === 'missing' && translation.source === 'browser'
+                    ? '未找到网页译文'
+                    : translation.status === 'skipped'
+                      ? '此事件未翻译'
+                      : translation.status === 'interrupted'
+                        ? '翻译已中断'
+                        : `翻译失败：${translation.error || '请重试'}`}
+            </p>
+          ) : null}
+          {translation.status === 'pending' && (
             <p className="assistant-wait">
               <LoaderCircle className="animate-spin" size={14} />
-              {translation.source === 'local' ? 'Chrome 本地翻译中' : '正在翻译'}
+              {translation.source === 'local' ? 'Chrome 本地翻译中' : 'DeepSeek 翻译中'}
               <span className="assistant-ellipsis" aria-hidden="true">
                 …
               </span>
             </p>
-          ) : translation.status === 'ready' ? (
-            <p className="assistant-translation-text whitespace-pre-wrap break-words">
-              <FlagText text={translation.chinese || '无译文'} />
-            </p>
-          ) : (
-            <p className="assistant-muted">
-              {translation.source === 'local'
-                ? `Chrome 本地翻译未完成：${translation.error || '尚无可用译文，原文已保留'}`
-                : translation.status === 'missing' && translation.source === 'browser'
-                  ? '未找到网页译文'
-                  : translation.status === 'skipped'
-                    ? '此事件未翻译'
-                    : translation.status === 'interrupted'
-                      ? '翻译已中断'
-                      : `翻译失败：${translation.error || '请重试'}`}
+          )}
+          {translation.manualAttempt && (
+            <p role={translation.manualAttempt.status === 'skipped' ? 'status' : 'alert'} className={translation.manualAttempt.status === 'skipped' ? 'assistant-muted' : 'assistant-error-text'}>
+              {translation.manualAttempt.status === 'skipped' && translation.status === 'ready'
+                ? `含义不明确，保留${translation.source === 'browser' ? '网页' : '本地'}译文`
+                : translation.manualAttempt.message}
             </p>
           )}
           {manualTranslationActions && manualTranslation && row.kind === 'comment' &&
             !['sent', 'dismissed'].includes(row.reply.status) &&
             (['missing', 'failed', 'interrupted'].includes(translation.status) ||
-              (translation.status === 'skipped' && translation.source === 'local') ||
+              (translation.status === 'ready' && translation.source === 'local') ||
+              translation.status === 'skipped' ||
+              !!translation.manualAttempt ||
               (translation.status === 'pending' && translation.source !== 'local')) && (
               <Button
                 size="sm"
@@ -444,7 +468,7 @@ export function AssistantMessageCard({
                 {translation.status === 'pending' ? 'DeepSeek 翻译中' : 'DeepSeek 翻译'}
               </Button>
             )}
-          {currentRetry?.error && translation.status !== 'ready' && translation.status !== 'pending' && (
+          {currentRetry?.error && translation.status !== 'pending' && (
             <p role="alert" className="assistant-error-text">{currentRetry.error}</p>
           )}
           {interactive && !manualTranslation &&

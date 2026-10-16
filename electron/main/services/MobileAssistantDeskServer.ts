@@ -8,7 +8,10 @@ import { compareAssistantAttentionRows } from '../../../shared/assistantAttentio
 import type { AssistantDeskCommand, AssistantDeskResult, AssistantDeskRow, AssistantDeskState } from '../../../shared/assistantDesk'
 import { validateDeskHttp } from '../../../shared/assistantDeskContract.mjs'
 import type { AssistantVoiceCommand, AssistantVoiceResult } from '../../../shared/assistantVoice'
-import { MOBILE_ASSISTANT_ACTIONS, type MobileAssistantAccessStatus, type MobileAssistantDeskSnapshot } from '../../../shared/mobileAssistantDesk'
+import { MOBILE_ASSISTANT_ACTIONS, type MobileAssistantAccessStatus, type MobileAssistantDeskSnapshot, type MobileAssistantCameraCommand, type MobileAssistantCameraState, type MobileStudioMicCommand } from '../../../shared/mobileAssistantDesk'
+import type { ObsEffectResponse } from '../../../shared/obsEffect'
+import type { StudioMicHotkeyResult } from '../../../shared/studioMicHotkey'
+import type { XiaomiCameraCommand, XiaomiCameraResult } from '../../../shared/xiaomiCamera'
 import type { AssistantDiagnosticContext, AssistantDiagnosticTrace } from './AssistantDiagnostics'
 
 export interface MobileAssistantDeskServerOptions {
@@ -17,6 +20,9 @@ export interface MobileAssistantDeskServerOptions {
   assetDirectory: string
   execute: (command: AssistantDeskCommand) => Promise<AssistantDeskResult>
   voice?: (command: AssistantVoiceCommand) => Promise<AssistantVoiceResult>
+  camera?: (command: MobileAssistantCameraCommand) => Promise<ObsEffectResponse>
+  studioMic?: (command: MobileStudioMicCommand) => Promise<StudioMicHotkeyResult>
+  xiaomi?: (command: Exclude<XiaomiCameraCommand, { action: 'config-get' } | { action: 'config-save' }>) => Promise<XiaomiCameraResult>
   voiceScene?: (accountId: string, rowId: string) => Promise<Pick<AssistantDeskState, 'activeSession' | 'rows' | 'attention'>>
   trace?: AssistantDiagnosticTrace
   host?: string
@@ -35,8 +41,16 @@ function projectRow(row: AssistantDeskRow): AssistantDeskRow {
     if (row[key] !== undefined) Object.assign(output, { [key]: row[key] })
   }
   if (row.replyLanguageHint) output.replyLanguageHint = { language: row.replyLanguageHint.language, source: row.replyLanguageHint.source }
-  for (const key of ['source', 'method', 'language', 'chinese'] as const) {
+  for (const key of ['source', 'method', 'language', 'chinese', 'error'] as const) {
     if (row.translation[key] !== undefined) Object.assign(output.translation, { [key]: row.translation[key] })
+  }
+  if (row.translation.fallback) {
+    const fallback = row.translation.fallback
+    output.translation.fallback = { source: fallback.source, chinese: fallback.chinese,
+      ...(fallback.method ? { method: fallback.method } : {}), ...(fallback.language ? { language: fallback.language } : {}) }
+  }
+  if (row.translation.manualAttempt) output.translation.manualAttempt = {
+    status: row.translation.manualAttempt.status, message: row.translation.manualAttempt.message,
   }
   for (const key of ['text', 'chinese', 'targetLanguage', 'sentAt'] as const) {
     if (row.reply[key] !== undefined) Object.assign(output.reply, { [key]: row.reply[key] })
@@ -154,6 +168,19 @@ const SAFE_MESSAGES: Record<string, string> = {
   VOICE_STOP_FAILED: '豆包未确认结束录音；如仍在录音请取消',
   VOICE_CANCEL_FAILED: '豆包未确认取消录音，请检查服务后再取消',
   VOICE_NO_TEXT: '未识别到文字，请确认麦克风后重试',
+  STUDIO_MIC_UNSUPPORTED_PLATFORM: '此麦克风热键当前仅支持 Mac，请在电脑端检查',
+  STUDIO_MIC_HELPER_UNAVAILABLE: '麦克风热键助手未就绪，请在电脑端检查',
+  STUDIO_MIC_PERMISSION_REQUIRED: '尚未获得 Mac 辅助功能权限，请在电脑端授权',
+  STUDIO_MIC_NOT_RUNNING: '请先在电脑上打开 TikTok LIVE Studio',
+  STUDIO_MIC_FOCUS_FAILED: '无法激活 TikTok LIVE Studio，未发送热键',
+  STUDIO_MIC_BUSY: '正在发送麦克风热键，请稍候',
+  STUDIO_MIC_COOLDOWN: '操作太快，请稍后再切换麦克风',
+  STUDIO_MIC_TIMEOUT: '热键操作超时，请先核对 TikTok LIVE Studio 麦克风状态',
+  STUDIO_MIC_HELPER_FAILED: '热键操作结果未确认，请在电脑端核对麦克风状态',
+  STUDIO_MIC_INVALID_RESPONSE: '热键状态未确认，请在电脑端检查',
+  STUDIO_MIC_VOICE_BUSY: '请先结束豆包录音，或恢复 TK 开麦后重新对齐',
+  VOICE_MIC_BLOCKED: '麦克风联动未就绪，请先检查 TK Studio，必要时恢复开麦后重新对齐',
+  VOICE_START_NOT_STARTED: '豆包录音未开始，请检查语音服务和麦克风权限后重试',
 }
 
 function failure(code: string, message = '操作未完成，请刷新后重试'): AssistantDeskResult {
@@ -219,6 +246,86 @@ export class MobileAssistantDeskServer {
 
   constructor(private readonly options: MobileAssistantDeskServerOptions) {
     validateDeskHttp('/assistant/command', { action: 'state', params: { accountId: options.accountId } })
+  }
+
+  private async cameraCommand(body: unknown): Promise<AssistantDeskResult<MobileAssistantCameraState>> {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return failure('MOBILE_INVALID_COMMAND', '机位操作参数无效') as AssistantDeskResult<MobileAssistantCameraState>
+    const input = body as Record<string, unknown>
+    const valid = input.action === 'status' ? Object.keys(input).length === 1
+      : input.action === 'switch' && Object.keys(input).length === 2 && ['android', 'iphone'].includes(input.target as string)
+    if (!valid) return failure('MOBILE_INVALID_COMMAND', '机位操作参数无效') as AssistantDeskResult<MobileAssistantCameraState>
+    if (!this.options.camera) return failure('MOBILE_CAMERA_UNAVAILABLE', 'OBS 机位控制未就绪，请在电脑端检查') as AssistantDeskResult<MobileAssistantCameraState>
+    const result = await this.options.camera(body as MobileAssistantCameraCommand)
+    if (!result.ok || !result.cameraStatus?.ok) return failure('MOBILE_CAMERA_UNAVAILABLE', 'OBS 机位未就绪，请检查手机画面和电脑上的 OBS') as AssistantDeskResult<MobileAssistantCameraState>
+    const status = result.cameraStatus
+    if (input.action === 'switch' && status.selected !== input.target)
+      return failure('MOBILE_CAMERA_UNCONFIRMED', '未确认机位已切换，请先检查当前画面') as AssistantDeskResult<MobileAssistantCameraState>
+    const data: MobileAssistantCameraState = { available: true, message: status.onProgram === false
+      ? '机位场景当前不在直播输出，请在电脑上检查 OBS'
+      : input.action === 'switch' ? `已切到${input.target === 'iphone' ? 'iPhone' : '小米'}机位` : 'OBS 机位状态已读取' }
+    if (status.selected && ['android', 'iphone', 'both', 'none'].includes(status.selected)) data.selected = status.selected
+    for (const key of ['androidEnabled', 'iphoneEnabled', 'onProgram'] as const)
+      if (typeof status[key] === 'boolean') Object.assign(data, { [key]: status[key] })
+    return { ok: true, data }
+  }
+
+  private async studioMicCommand(body: unknown): Promise<AssistantDeskResult> {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return failure('MOBILE_INVALID_COMMAND', '麦克风操作参数无效')
+    const input = body as Record<string, unknown>
+    if (Object.keys(input).length !== 1 || !['status', 'toggle', 'align-open'].includes(input.action as string)) return failure('MOBILE_INVALID_COMMAND', '麦克风操作参数无效')
+    if (!this.options.studioMic) return failure('STUDIO_MIC_HELPER_UNAVAILABLE', SAFE_MESSAGES.STUDIO_MIC_HELPER_UNAVAILABLE)
+    const result = await this.options.studioMic(body as MobileStudioMicCommand)
+    if (!result.ok) return publicFailure(result)
+    const data = result.data
+    if (!data || data.micState !== 'unknown' || data.hotkey !== 'Control+Option+M' ||
+      [data.supported, data.running, data.accessGranted].some(value => typeof value !== 'boolean') ||
+      (input.action === 'toggle' && data.sent !== true)) return failure('STUDIO_MIC_INVALID_RESPONSE', SAFE_MESSAGES.STUDIO_MIC_INVALID_RESPONSE)
+    return { ok: true, data: { supported: data.supported, running: data.running, accessGranted: data.accessGranted,
+      hotkey: 'Control+Option+M', micState: 'unknown', ...(input.action === 'toggle' && data.sent ? { sent: true } : {}),
+      ...(data.routeState && ['live', 'doubao', 'unknown'].includes(data.routeState) ? { routeState: data.routeState } : {}),
+      ...(typeof data.linked === 'boolean' ? { linked: data.linked } : {}),
+      message: input.action === 'toggle' ? '已发送切换热键，请在 TikTok LIVE Studio 核对直播麦克风状态' : !data.supported ? SAFE_MESSAGES.STUDIO_MIC_UNSUPPORTED_PLATFORM
+        : !data.running ? SAFE_MESSAGES.STUDIO_MIC_NOT_RUNNING : !data.accessGranted ? SAFE_MESSAGES.STUDIO_MIC_PERMISSION_REQUIRED : '热键助手已就绪；直播麦克风状态仍需在 TikTok LIVE Studio 核对' } }
+  }
+
+  private async xiaomiCommand(body: unknown): Promise<AssistantDeskResult> {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return failure('MOBILE_INVALID_COMMAND', '镜头操作参数无效')
+    const input = body as Record<string, unknown>
+    const simple = ['status', 'settings', 'start', 'stop', 'autofocus', 'preview'].includes(input.action as string)
+    const number = (value: unknown, minimum: number, maximum: number) => typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum
+    const valid = simple ? Object.keys(input).length === 1 : input.action === 'zoom'
+      ? Object.keys(input).length === 2 && number(input.ratio, 1, 10)
+      : input.action === 'focus' && Object.keys(input).length === 4 && number(input.x, 0, 1) && number(input.y, 0, 1)
+        && typeof input.previewId === 'string' && /^[a-zA-Z0-9_-]{1,256}$/.test(input.previewId)
+    if (!valid) return failure('MOBILE_INVALID_COMMAND', '镜头操作参数无效')
+    if (!this.options.xiaomi) return failure('XIAOMI_CONNECTION_FAILED', '小米相机控制未就绪，请在电脑端检查')
+    const result = await this.options.xiaomi(body as Exclude<XiaomiCameraCommand, { action: 'config-get' } | { action: 'config-save' }>)
+    if (!result.ok) {
+      const code = result.error?.code && /^XIAOMI_[A-Z0-9_]{1,50}$/.test(result.error.code) ? result.error.code : 'XIAOMI_CONNECTION_FAILED'
+      const messages: Record<string, string> = { XIAOMI_PREVIEW_STALE: '预览已过期，请刷新图像后再点选对焦', XIAOMI_ZOOM_PENDING: '请先刷新镜头设置，等待实际倍率确认后再获取预览', XIAOMI_TOKEN_REQUIRED: '请先在电脑上保存小米相机密钥', XIAOMI_BUSY: '镜头操作正在进行，请稍候', XIAOMI_RATE_LIMITED: '镜头操作太快，请稍后再试' }
+      return failure(code, messages[code] ?? '小米相机操作未确认，请检查相机连接后刷新状态')
+    }
+    const data: Record<string, unknown> = {}
+    if (result.camera && ['off', 'ready', 'capturing', 'offline', 'unknown'].includes(result.camera.state)) data.camera = { state: result.camera.state, timestamp: String(result.camera.timestamp).slice(0, 100) }
+    if (result.settings) {
+      const settings: Record<string, unknown> = { available: result.settings.available === true }
+      for (const key of ['zoom', 'zoom_min', 'zoom_max', 'observed_zoom', 'saved_zoom', 'timestamp_ms'] as const)
+        if (typeof result.settings[key] === 'number' && Number.isFinite(result.settings[key])) settings[key] = result.settings[key]
+      for (const key of ['ready', 'focus_supported', 'focus_pending'] as const)
+        if (typeof result.settings[key] === 'boolean') settings[key] = result.settings[key]
+      for (const key of ['focus_mode', 'observed_focus_mode', 'focus_state', 'last_focus_result'] as const)
+        if (typeof result.settings[key] === 'string') settings[key] = result.settings[key]?.slice(0, 100)
+      data.settings = settings
+    }
+    if (result.operation) {
+      const operation: Record<string, boolean> = {}
+      for (const key of ['success', 'changed', 'applied', 'saved', 'focus_submitted'] as const)
+        if (typeof result.operation[key] === 'boolean') operation[key] = result.operation[key] as boolean
+      data.operation = operation
+    }
+    if (result.preview && /^[a-zA-Z0-9_-]{1,256}$/.test(result.preview.id) && /^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(result.preview.dataUrl)
+      && result.preview.dataUrl.length <= 8 * 1024 * 1024 && Number.isSafeInteger(result.preview.capturedAt) && Number.isSafeInteger(result.preview.expiresAt)) data.preview = { id: result.preview.id, dataUrl: result.preview.dataUrl, capturedAt: result.preview.capturedAt, expiresAt: result.preview.expiresAt }
+    return { ok: true, data }
   }
 
   status(): MobileAssistantAccessStatus {
@@ -329,7 +436,8 @@ export class MobileAssistantDeskServer {
         return result.ok ? send(200, { ok: true, data: projectMobileAssistantState(result.data as AssistantDeskState, this.options.accountId, this.options.accountName, (this.options.now ?? Date.now)()) }) : send(400, publicFailure(result))
       }
       const isVoice = path === `${base}api/voice`
-      if (!isVoice && path !== `${base}api/command`) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
+      const control = path === `${base}api/camera` ? 'camera' : path === `${base}api/studio-mic` ? 'studio-mic' : path === `${base}api/xiaomi` ? 'xiaomi' : undefined
+      if (!isVoice && !control && path !== `${base}api/command`) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
       diagnostic = { traceId: randomUUID(), action: isVoice ? 'mobile.voice' : 'mobile.command', accountId: this.options.accountId }
       diagnosticStarted = performance.now()
       trace('start')
@@ -340,6 +448,13 @@ export class MobileAssistantDeskServer {
       if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') return send(415, failure('MOBILE_CONTENT_TYPE', '请求格式须为JSON'))
       if (Number(request.headers['content-length']) > MAX_BODY_BYTES) return send(413, failure('MOBILE_BODY_TOO_LARGE', '请求超过16KiB上限'))
       const body = await readJson(request)
+      if (control) {
+        diagnostic.action = `mobile.${control}`
+        if (!access.active || this.access !== access || request.aborted) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
+        const result = await (control === 'camera' ? this.cameraCommand(body) : control === 'xiaomi' ? this.xiaomiCommand(body) : this.studioMicCommand(body))
+        if (!access.active || this.access !== access) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
+        return send(result.ok ? 200 : 400, result)
+      }
       if (isVoice) {
         if (!this.options.voice) return send(400, failure('VOICE_SERVICE_UNAVAILABLE', SAFE_MESSAGES.VOICE_SERVICE_UNAVAILABLE))
         if (!body || typeof body !== 'object' || Array.isArray(body)) return send(400, failure('MOBILE_INVALID_COMMAND', '语音输入参数无效'))
@@ -398,7 +513,7 @@ export class MobileAssistantDeskServer {
           // Session changes and uncertain service failures can occur after start,
           // so they deliberately retain cleanup of the attempted owner.
           if (!result.ok && ['VOICE_INVALID_COMMAND', 'VOICE_ALREADY_RECORDING', 'VOICE_BUSY', 'VOICE_NOT_OWNED',
-            'VOICE_SERVICE_BUSY', 'VOICE_NO_ACTIVE_SESSION', 'VOICE_ROW_NOT_FOUND', 'NO_ACTIVE_SESSION', 'ROW_NOT_FOUND'].includes(result.error.code)) startMayOwn = false
+            'VOICE_SERVICE_BUSY', 'VOICE_NO_ACTIVE_SESSION', 'VOICE_ROW_NOT_FOUND', 'NO_ACTIVE_SESSION', 'ROW_NOT_FOUND', 'VOICE_MIC_BLOCKED', 'VOICE_START_NOT_STARTED'].includes(result.error.code)) startMayOwn = false
         }
         finally { startSettled = true; await cleanAbandonedStart() }
         if (unavailable()) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
@@ -416,7 +531,9 @@ export class MobileAssistantDeskServer {
           if (session?.accountId !== this.options.accountId || session.status !== 'collecting' || session.id !== voiceSessionId || !currentRow(state, session.id))
             return send(400, failure('MOBILE_SESSION_CHANGED', SAFE_MESSAGES.MOBILE_SESSION_CHANGED))
         }
-        return send(200, { ok: true, data: { status: data.status, rowId: data.rowId, ...(expected === 'stopped' ? { text: data.text } : {}) } })
+        return send(200, { ok: true, data: { status: data.status, rowId: data.rowId, ...(expected === 'stopped' ? { text: data.text } : {}),
+          ...(data.micWarning ? { micWarning: '豆包录音已结束，直播麦克风恢复未确认；请恢复 TK 开麦后重新对齐' } : {}),
+          ...(data.routeState && ['live', 'doubao', 'unknown'].includes(data.routeState) ? { routeState: data.routeState } : {}) } })
       }
       let command: AssistantDeskCommand
       try {
@@ -444,6 +561,10 @@ export class MobileAssistantDeskServer {
         const session = state.activeSession
         if (session?.accountId !== this.options.accountId || session.status !== 'collecting') return send(400, failure('NO_ACTIVE_SESSION', SAFE_MESSAGES.NO_ACTIVE_SESSION))
         sessionId = session.id
+        if (command.action === 'translate-retry') {
+          if (state.ai.used >= state.ai.limit || state.ai.pauseReason === 'request-limit') return send(400, failure('AI_REQUEST_LIMIT', SAFE_MESSAGES.AI_REQUEST_LIMIT))
+          if (state.ai.paused) return send(400, failure('AI_PAUSED', SAFE_MESSAGES.AI_PAUSED))
+        }
         if (command.action === 'segment-toggle') {
           if (command.params.sessionId !== sessionId) return send(400, failure('MOBILE_SESSION_CHANGED', SAFE_MESSAGES.MOBILE_SESSION_CHANGED))
         } else if (![...state.rows, ...(state.attention?.rows ?? [])].some(row => row.id === rowId && row.accountId === this.options.accountId && row.sessionId === sessionId))

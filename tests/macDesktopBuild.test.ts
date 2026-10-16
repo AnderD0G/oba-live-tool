@@ -37,6 +37,7 @@ test('Mac build preserves the complete Electron UI and unpacked SQLite workers w
   assert.deepEqual(actual.config.extraResources, [
     { from: 'INSTALL-GUIDE.txt', to: 'INSTALL-GUIDE.txt' },
     { from: 'THIRD-PARTY-NOTICES.txt', to: 'THIRD-PARTY-NOTICES.txt' },
+    { from: path.resolve('.cache/native/studio-mic-hotkey'), to: 'studio-mic-hotkey' },
   ])
   assert.deepEqual(actual.config.mac.target, [{ target: 'dir', arch: ['arm64'] }])
   assert.equal(actual.config.mac.identity, null)
@@ -67,4 +68,29 @@ test('Mac build CLI refuses a non-Mac host without launching a build', { skip: p
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /MAC_BUILD_REQUIRES_DARWIN/)
   assert.equal(result.stdout, '')
+})
+
+test('native Studio helper rejects unsupported hosts and architectures before running a compiler', () => {
+  const { buildStudioMicHotkey } = require(path.resolve('scripts/build-studio-mic-hotkey.cjs'))
+  for (const platform of ['win32', 'linux'])
+    assert.throws(() => buildStudioMicHotkey({ platform, root: path.resolve('.') }), /MAC_HELPER_REQUIRES_DARWIN/)
+  assert.throws(() => buildStudioMicHotkey({ platform: 'darwin', arch: 'universal', root: path.resolve('.') }), /UNSUPPORTED_MAC_ARCH/)
+})
+
+test('compiled Mac helper exposes read-only status and rejects expanded commands', { skip: process.platform !== 'darwin' }, () => {
+  const { buildStudioMicHotkey } = require(path.resolve('scripts/build-studio-mic-hotkey.cjs'))
+  const helper = buildStudioMicHotkey({ platform: 'darwin', arch: process.arch, root: path.resolve('.') })
+  const status = spawnSync(helper, ['--status'], { encoding: 'utf8', timeout: 8000 })
+  assert.equal(status.status, 0, status.stderr)
+  const value = JSON.parse(status.stdout)
+  assert.equal(value.ok, true)
+  assert.equal(value.data.supported, true)
+  assert.equal(typeof value.data.running, 'boolean')
+  assert.equal(typeof value.data.accessGranted, 'boolean')
+  assert.equal(value.data.micState, 'unknown')
+  assert.equal(value.data.hotkey, 'Control+Option+M')
+  assert.notEqual(value.data.sent, true)
+  const invalid = spawnSync(helper, ['--status', '--toggle'], { encoding: 'utf8', timeout: 8000 })
+  assert.equal(invalid.status, 0, invalid.stderr)
+  assert.equal(JSON.parse(invalid.stdout).error.code, 'STUDIO_MIC_INVALID_COMMAND')
 })

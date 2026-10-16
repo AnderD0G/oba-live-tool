@@ -1,0 +1,14 @@
+{
+  "name": "oba-voice-companion",
+  "productName": "OBA Voice",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Keep the local OBA voice microphone connection independent of Chrome tabs",
+  "author": "OBA contributors",
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "build:mac": "node ../../scripts/build-mac-voice-app.cjs"
+  }
+}

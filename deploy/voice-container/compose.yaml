@@ -14,6 +14,7 @@ services:
       SELKIES_AUDIO_ON_START: "false"
       SELKIES_ENABLE_CLIPBOARD: "false"
       SELKIES_WEBCAM_ENABLED: "false"
+      NO_WEBCAM: "true"
       SELKIES_GAMEPAD_ENABLED: "false"
       SELKIES_FRAMERATE: "10"
     ports:

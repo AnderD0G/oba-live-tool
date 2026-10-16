@@ -1,7 +1,8 @@
 import type { AssistantDeskMarkerStatus, AssistantDeskResult, AssistantDeskRow, AssistantDeskState } from './assistantDesk'
 import type { AudiencePolicyTier } from './assistantAudiencePolicy'
+import type { ObsCameraTarget } from './obsCamera'
 
-export const MOBILE_ASSISTANT_ACTIONS = ['attention-pin', 'attention-defer', 'reply-dismiss', 'attention-countdown', 'reply-update', 'reply-translate', 'reply-approve', 'segment-toggle'] as const
+export const MOBILE_ASSISTANT_ACTIONS = ['attention-pin', 'attention-defer', 'reply-dismiss', 'attention-countdown', 'reply-update', 'reply-translate', 'reply-approve', 'segment-toggle', 'translate-retry'] as const
 export type MobileAssistantAction = typeof MOBILE_ASSISTANT_ACTIONS[number]
 
 export interface MobileAssistantAccessStatus {
@@ -12,6 +13,16 @@ export interface MobileAssistantAccessStatus {
 }
 export interface MobileAssistantAccessCommand { action: 'status' | 'start' | 'stop'; accountId: string }
 export type MobileAssistantAccessResult = AssistantDeskResult<MobileAssistantAccessStatus>
+export type MobileAssistantCameraCommand = { action: 'status' } | { action: 'switch'; target: ObsCameraTarget }
+export interface MobileAssistantCameraState {
+  available: boolean
+  selected?: ObsCameraTarget | 'both' | 'none'
+  androidEnabled?: boolean
+  iphoneEnabled?: boolean
+  onProgram?: boolean
+  message: string
+}
+export type MobileStudioMicCommand = { action: 'status' | 'toggle' | 'align-open' }
 
 export interface MobileAssistantDeskSnapshot {
   accountId: string

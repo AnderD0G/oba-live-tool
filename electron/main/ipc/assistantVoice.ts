@@ -6,6 +6,7 @@ import { AssistantVoiceCoordinator } from '../services/AssistantVoiceCoordinator
 import { typedIpcMainHandle } from '../utils/ipc'
 import { executeAssistantVoiceScene } from './assistantDesk'
 import { registerAnalysisShutdown } from './analysisRoom'
+import { getVoiceMicRouter } from './studioMicHotkey'
 
 let voice: AssistantVoiceCoordinator | undefined
 let diagnostics: ReturnType<typeof createAssistantDiagnostics> | undefined
@@ -14,7 +15,7 @@ let diagnostics: ReturnType<typeof createAssistantDiagnostics> | undefined
 export function getAssistantVoice(): AssistantVoiceCoordinator {
   if (!voice) {
     diagnostics ??= createAssistantDiagnostics(join(app.getPath('userData'), 'logs'))
-    voice = new AssistantVoiceCoordinator({ state: executeAssistantVoiceScene, trace: diagnostics.trace })
+    voice = new AssistantVoiceCoordinator({ state: executeAssistantVoiceScene, trace: diagnostics.trace, micRouter: getVoiceMicRouter() })
   }
   return voice
 }

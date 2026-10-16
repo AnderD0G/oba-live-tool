@@ -17,7 +17,7 @@ const replyErrorMessages = {
   PREVIOUS_REQUEST_FAILED: '此前操作失败，请重新提交本次操作',
   SEND_FAILED: '发送未成功，请先核对直播间消息后再重试',
 }
-const allowedActions = new Set(['attention-pin', 'attention-defer', 'reply-dismiss', 'attention-countdown', 'reply-update', 'reply-approve', 'reply-translate', 'segment-toggle'])
+const allowedActions = new Set(['attention-pin', 'attention-defer', 'reply-dismiss', 'attention-countdown', 'reply-update', 'reply-approve', 'reply-translate', 'segment-toggle', 'translate-retry'])
 
 export function filterRows(rows, filter = {}) {
   return rows.filter(row => {
@@ -77,6 +77,10 @@ export function canApprove(row, draft, chineseDraft, languageDraft) {
 
 export function rowCommand(action, row, options = {}) {
   const params = { rowId: row.id }
+  if (action === 'retranslate') {
+    if (row.kind !== 'comment' || !row.original?.trim() || busyReplies.has(row.reply?.status) || ['sent', 'dismissed'].includes(row.reply?.status)) throw Error('此评论当前不能复译')
+    return { action: 'translate-retry', params }
+  }
   if (action === 'pin') {
     params.pinned = !options.pinned
     if (options.pinned && Number.isFinite(row.triage?.attention?.pinRevision)) params.expectedPinRevision = row.triage.attention.pinRevision
@@ -178,7 +182,7 @@ export function createMobileClient(options = {}) {
       changed()
     },
     async poll() {
-      if (polling || pending.size) return false
+      if (polling || [...pending].some(key => !String(key).startsWith('control:'))) return false
       polling = true
       const startedEpoch = epoch
       try {
@@ -202,7 +206,25 @@ export function createMobileClient(options = {}) {
     },
     async command(action, params, key = params.rowId ?? params.windowId) {
       if (!allowedActions.has(action) || !params || Object.hasOwn(params, 'accountId')) return failure('UNSUPPORTED', '此操作不可用')
-      return mutate('./api/command', { action, params }, key, action === 'reply-translate' ? 25_000 : 12_000)
+      return mutate('./api/command', { action, params }, key, ['reply-translate', 'translate-retry'].includes(action) ? 25_000 : 12_000)
+    },
+    async camera(command) {
+      if (!command || typeof command !== 'object' || Array.isArray(command) ||
+        !(command.action === 'status' && Object.keys(command).length === 1 || command.action === 'switch' && Object.keys(command).length === 2 && ['android', 'iphone'].includes(command.target))) return failure('UNSUPPORTED', '机位操作不可用')
+      return mutate('./api/camera', command, 'control:camera', 20_000)
+    },
+    async studioMic(action) {
+      if (!['status', 'toggle', 'align-open'].includes(action)) return failure('UNSUPPORTED', '麦克风操作不可用')
+      return mutate('./api/studio-mic', { action }, 'control:studio-mic', 12_000)
+    },
+    async xiaomi(command) {
+      if (!command || typeof command !== 'object' || Array.isArray(command)) return failure('UNSUPPORTED', '镜头操作不可用')
+      const number = (value, low, high) => typeof value === 'number' && Number.isFinite(value) && value >= low && value <= high
+      const valid = ['status', 'settings', 'start', 'stop', 'autofocus', 'preview'].includes(command.action) ? Object.keys(command).length === 1
+        : command.action === 'zoom' ? Object.keys(command).length === 2 && number(command.ratio, 1, 10)
+          : command.action === 'focus' && Object.keys(command).length === 4 && number(command.x, 0, 1) && number(command.y, 0, 1) && typeof command.previewId === 'string' && /^[a-zA-Z0-9_-]{1,256}$/.test(command.previewId)
+      if (!valid) return failure('UNSUPPORTED', '镜头操作不可用')
+      return mutate('./api/xiaomi', command, 'control:xiaomi', ['start', 'stop'].includes(command.action) ? 190_000 : 35_000)
     },
     async voice(action, rowId, settings = {}) {
       if (!['start', 'stop', 'cancel'].includes(action) || typeof rowId !== 'string' || !rowId) return failure('UNSUPPORTED', '语音操作不可用')
@@ -268,10 +290,13 @@ export function mountMobileDesk() {
   const chineseDrafts = new Map()
   const languageDrafts = new Map()
   const transcripts = new Map()
+  const retranslationInFlight = new Set()
   let voiceSession = null
   let markerIntent = null
   let markerNotBefore = 0
   let leaving = false
+  let cameraState = null, micState = null, xiaomiState = null, xiaomiSettings = null, xiaomiPreview = null
+  let controlsInitialized = false
   const retryIds = new Map()
   const cards = { live: new Map(), tasks: new Map() }
   const follows = { live: createFollowState(), tasks: createFollowState() }
@@ -303,6 +328,40 @@ export function mountMobileDesk() {
   capture.append(element('span', '', '采集状态'), captureValue)
   metrics.append(online, tasksMetric, capture)
   header.append(brand, status, metrics)
+
+  const controls = element('details', 'live-controls')
+  controls.append(element('summary', '', '机位与麦克风'))
+  const controlBody = element('div', 'live-controls-body')
+  const cameraLabel = element('p', 'control-label', 'OBS 直播机位')
+  const cameraNotice = element('p', 'control-note', '机位状态未读取')
+  const cameraActions = element('div', 'control-actions')
+  const iphoneCamera = button('iPhone 机位', 'secondary-button')
+  const androidCamera = button('小米机位', 'secondary-button')
+  const cameraCheck = button('检查机位', 'text-button')
+  cameraActions.append(iphoneCamera, androidCamera, cameraCheck)
+  const micLabel = element('p', 'control-label', '直播麦克风 · 豆包录音自动联动')
+  const micNotice = element('p', 'control-note', '以 TK Studio 初始开麦为基准；开始豆包录音切换，结束或取消后切回。')
+  const micActions = element('div', 'control-actions')
+  const micToggle = button('切换直播麦克风', 'secondary-button')
+  const micCheck = button('检查麦克风控制', 'text-button')
+  const micAlign = button('我已恢复 TK 开麦，重新对齐', 'secondary-button')
+  micAlign.hidden = true
+  micActions.append(micToggle, micCheck, micAlign)
+  const xiaomiLabel = element('p', 'control-label', '小米镜头')
+  const xiaomiNotice = element('p', 'control-note', '请先在电脑上配置小米相机密钥')
+  const xiaomiActions = element('div', 'control-actions')
+  const xiaomiStart = button('开启小米相机', 'secondary-button'), xiaomiStop = button('关闭小米相机', 'secondary-button')
+  const xiaomiCheck = button('刷新镜头设置', 'text-button'), xiaomiAuto = button('自动对焦', 'secondary-button')
+  xiaomiActions.append(xiaomiStart, xiaomiStop, xiaomiCheck, xiaomiAuto)
+  const zoomField = element('label', 'control-zoom', '变焦倍率')
+  const zoomInput = element('input'); zoomInput.type = 'number'; zoomInput.min = '1'; zoomInput.max = '10'; zoomInput.step = '0.1'; zoomInput.value = '1'; zoomInput.setAttribute('aria-label', '小米变焦倍率')
+  const zoomApply = button('应用变焦', 'secondary-button')
+  zoomField.append(zoomInput, zoomApply)
+  const previewButton = button('刷新预览，点选对焦', 'secondary-button')
+  const previewImage = element('img', 'xiaomi-preview'); previewImage.alt = '小米相机预览，点选对焦'; previewImage.hidden = true
+  const previewNote = element('p', 'control-note', '刷新预览后 2 秒内可点选对焦；变焦后先刷新镜头设置。')
+  controlBody.append(cameraLabel, cameraActions, cameraNotice, micLabel, micActions, micNotice, xiaomiLabel, xiaomiActions, zoomField, previewButton, previewImage, previewNote, xiaomiNotice)
+  controls.append(controlBody)
 
   const notice = element('div', 'notice')
   notice.setAttribute('role', 'status')
@@ -402,7 +461,7 @@ export function mountMobileDesk() {
   taskTab.append(taskIcon, element('span', '', '任务'))
   liveTab.setAttribute('aria-current', 'page')
   navigation.append(liveTab, taskTab)
-  shell.append(header, notice, voiceBar, workspace, markerBar, navigation)
+  shell.append(header, controls, notice, voiceBar, workspace, markerBar, navigation)
   root.replaceChildren(shell)
 
   const overlay = element('div', 'sheet-overlay')
@@ -500,6 +559,79 @@ export function mountMobileDesk() {
     onError(message) { showNotice(message); if (!client.isConnected()) notice.dataset.connection = 'true' },
   })
 
+  function renderControls() {
+    const connected = client.isConnected()
+    const cameraBusy = client.isPending('control:camera')
+    for (const target of [iphoneCamera, androidCamera, cameraCheck]) target.disabled = !connected || cameraBusy
+    iphoneCamera.setAttribute('aria-pressed', String(connected && cameraState?.selected === 'iphone'))
+    androidCamera.setAttribute('aria-pressed', String(connected && cameraState?.selected === 'android'))
+    const micBusy = client.isPending('control:studio-mic')
+    micToggle.disabled = !connected || micBusy || Boolean(voiceSession) || ['doubao', 'unknown'].includes(micState?.routeState)
+    micCheck.disabled = !connected || micBusy
+    micAlign.hidden = micState?.routeState !== 'unknown'
+    micAlign.disabled = !connected || micBusy || Boolean(voiceSession)
+    const xiaomiBusy = client.isPending('control:xiaomi')
+    for (const target of [xiaomiStart, xiaomiStop, xiaomiCheck]) target.disabled = !connected || xiaomiBusy
+    xiaomiAuto.disabled = !connected || xiaomiBusy || !xiaomiSettings?.available || xiaomiSettings.focus_supported === false
+    zoomInput.disabled = !connected || xiaomiBusy || !xiaomiSettings?.available
+    zoomApply.disabled = zoomInput.disabled
+    previewButton.disabled = !connected || xiaomiBusy || !xiaomiSettings?.available
+    if (controls.open && connected && !controlsInitialized) {
+      controlsInitialized = true
+      queueMicrotask(() => { void runCamera({ action: 'status' }); void runMic('status') })
+    }
+  }
+  async function runCamera(command) {
+    if (client.isPending('control:camera')) return
+    const result = await client.camera(command)
+    cameraState = result.ok ? result.data : null
+    cameraNotice.textContent = result.ok ? result.data.message : result.error.message
+    renderControls()
+  }
+  async function runMic(action) {
+    if (client.isPending('control:studio-mic')) return
+    const result = await client.studioMic(action)
+    micState = result.ok ? result.data : null
+    micNotice.textContent = result.ok ? result.data.routeState === 'doubao' ? '豆包录音联动中，结束或取消后自动切回直播' : result.data.routeState === 'unknown' ? '热键已发送或恢复结果未确认；手动恢复 TK 开麦后重新对齐' : action === 'align-open' ? '已按 TK 开麦状态重新对齐' : result.data.message : result.error.message
+    renderControls()
+  }
+  async function runXiaomi(command) {
+    if (client.isPending('control:xiaomi')) return
+    if (['zoom', 'start', 'stop'].includes(command.action)) { xiaomiPreview = null; previewImage.hidden = true }
+    const result = await client.xiaomi(command)
+    if (!result.ok) { xiaomiNotice.textContent = result.error.message; if (['status', 'settings'].includes(command.action)) xiaomiSettings = null; renderControls(); return }
+    if (result.data.camera) xiaomiState = result.data.camera
+    if (result.data.settings) {
+      xiaomiSettings = result.data.settings
+      zoomInput.min = String(xiaomiSettings.zoom_min ?? 1); zoomInput.max = String(xiaomiSettings.zoom_max ?? 10)
+      if (typeof xiaomiSettings.observed_zoom === 'number') zoomInput.value = String(xiaomiSettings.observed_zoom)
+    }
+    if (result.data.preview) { xiaomiPreview = result.data.preview; previewImage.src = xiaomiPreview.dataUrl; previewImage.hidden = false }
+    const states = { off: '小米相机已关闭', ready: '小米相机已就绪', capturing: '小米相机已连接视频消费者', offline: '小米手机离线', unknown: '相机状态未确认' }
+    xiaomiNotice.textContent = result.data.preview ? '预览已更新，可在图像内点选对焦' : result.data.operation ? result.data.operation.focus_submitted ? '对焦已提交，请刷新设置查看结果' : '镜头指令已提交，请刷新设置核对' : `${states[xiaomiState?.state] || '镜头设置已读取'}${typeof xiaomiSettings?.observed_zoom === 'number' ? ` · 实际倍率 ${xiaomiSettings.observed_zoom}×` : ''}`
+    renderControls()
+  }
+  iphoneCamera.addEventListener('click', () => void runCamera({ action: 'switch', target: 'iphone' }))
+  androidCamera.addEventListener('click', () => void runCamera({ action: 'switch', target: 'android' }))
+  cameraCheck.addEventListener('click', () => void runCamera({ action: 'status' }))
+  micToggle.addEventListener('click', () => void runMic('toggle'))
+  micCheck.addEventListener('click', () => void runMic('status'))
+  micAlign.addEventListener('click', () => void runMic('align-open'))
+  xiaomiStart.addEventListener('click', () => void runXiaomi({ action: 'start' }))
+  xiaomiStop.addEventListener('click', () => void runXiaomi({ action: 'stop' }))
+  xiaomiCheck.addEventListener('click', async () => { await runXiaomi({ action: 'status' }); await runXiaomi({ action: 'settings' }) })
+  xiaomiAuto.addEventListener('click', () => void runXiaomi({ action: 'autofocus' }))
+  zoomApply.addEventListener('click', () => void runXiaomi({ action: 'zoom', ratio: Number(zoomInput.value) }))
+  previewButton.addEventListener('click', () => void runXiaomi({ action: 'preview' }))
+  previewImage.addEventListener('click', event => {
+    const serverNow = snapshot ? snapshot.serverNow + Math.max(0, Date.now() - receivedAt) : Date.now()
+    if (!xiaomiPreview || xiaomiPreview.expiresAt <= serverNow) { xiaomiNotice.textContent = '预览已过期，请刷新图像后再点选对焦'; return }
+    const rect = previewImage.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    void runXiaomi({ action: 'focus', x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)), previewId: xiaomiPreview.id })
+  })
+  controls.addEventListener('toggle', renderControls)
+
   function renderStatus() {
     const connected = client.isConnected()
     connection.textContent = connected ? '已连接' : snapshot ? '连接中断' : '连接中'
@@ -527,6 +659,7 @@ export function mountMobileDesk() {
     }
     renderCountdown()
     renderMarker()
+    renderControls()
   }
 
   function renderMarker() {
@@ -583,12 +716,15 @@ export function mountMobileDesk() {
     tags.append(tier, fact, pinTag)
     const original = element('p', 'original')
     const translation = element('p', 'translation')
+    const translationNote = element('p', 'translation-note')
     const viewerFacts = element('div', 'viewer-facts')
     const replyStatus = element('p', 'reply-state')
     const actions = element('div', 'card-actions')
     const pin = button('钉住', 'action-button pin-button')
     pin.dataset.action = 'pin'
     actions.append(pin)
+    const retranslate = button('DeepSeek 复译', 'action-button'); retranslate.dataset.action = 'retranslate'
+    actions.append(retranslate)
     const defer = button('稍后', 'action-button'); defer.dataset.action = 'defer'
     const complete = button('完成', 'action-button complete-button'); complete.dataset.action = 'complete'
     if (mode === 'tasks') actions.append(defer, complete)
@@ -635,8 +771,8 @@ export function mountMobileDesk() {
     sendingGroup.append(draftLabel, textarea, draftHint, draftActions)
     draftBox.append(chineseBox, sendingGroup)
     draftBox.hidden = true
-    node.append(top, tags, original, translation, viewerFacts, replyStatus, actions, draftBox)
-    const card = { node, name, handle, avatar, time, tier, fact, pinTag, original, translation, viewerFacts, replyStatus, pin, defer, complete, draftBox, textarea, draftHint, save, approve, row, mode, chineseInput, record, clearChinese, cancelRecord, transcript, appendTranscript, translate, voiceNote, sendingGroup, languagePicker, languageHint }
+    node.append(top, tags, original, translation, translationNote, viewerFacts, replyStatus, actions, draftBox)
+    const card = { node, name, handle, avatar, time, tier, fact, pinTag, original, translation, translationNote, retranslate, viewerFacts, replyStatus, pin, defer, complete, draftBox, textarea, draftHint, save, approve, row, mode, chineseInput, record, clearChinese, cancelRecord, transcript, appendTranscript, translate, voiceNote, sendingGroup, languagePicker, languageHint }
     node.addEventListener('click', event => {
       const target = event.target.closest('button[data-action]')
       if (target && !target.disabled) void runRowAction(card, target.dataset.action)
@@ -717,8 +853,20 @@ export function mountMobileDesk() {
     card.fact.textContent = factText(row)
     card.pinTag.hidden = !pinned
     card.original.textContent = row.original || factText(row)
-    card.translation.textContent = row.translation?.chinese || (row.translation?.status === 'pending' ? '中文翻译中…' : row.translation?.status === 'failed' ? '中文翻译暂不可用' : '')
+    const translation = row.translation ?? {}
+    const visible = translation.status === 'pending' && translation.fallback ? { ...translation.fallback, status: 'ready' } : translation
+    const unknown = translation.status === 'skipped' && translation.language === 'und'
+    card.translation.textContent = visible.status === 'ready' ? visible.chinese || '' : ''
     card.translation.hidden = !card.translation.textContent
+    card.translationNote.textContent = retranslationInFlight.has(row.id) ? 'DeepSeek 复译中，原译文保留'
+      : translation.manualAttempt ? translation.manualAttempt.status === 'skipped' ? '含义不明确，保留本地译文' : translation.manualAttempt.message
+        : unknown ? '含义不明确，保留原文' : translation.status === 'pending' ? translation.source === 'local' ? 'Chrome 本地翻译中' : 'DeepSeek 复译中，原译文保留'
+          : translation.error || (visible.status === 'ready' ? visible.source === 'local' ? visible.method === 'dictionary' ? '本地词表' : 'Chrome 本地译文' : visible.source === 'browser' ? '网页译文' : 'AI 译文' : '')
+    card.translationNote.hidden = !card.translationNote.textContent
+    card.translationNote.classList.toggle('reply-error', translation.status === 'failed' || ['failed', 'interrupted'].includes(translation.manualAttempt?.status))
+    card.retranslate.hidden = row.kind !== 'comment' || ['sent', 'dismissed'].includes(row.reply?.status) || translation.status === 'ready' && translation.source === 'ai'
+    card.retranslate.disabled = disabled || snapshot.ai?.paused || snapshot.ai?.used >= snapshot.ai?.limit || translation.status === 'pending' || busyReplies.has(row.reply?.status)
+    card.retranslate.textContent = retranslationInFlight.has(row.id) || translation.status === 'pending' && translation.source === 'ai' ? 'DeepSeek 复译中…' : 'DeepSeek 复译'
     const facts = []
     if (Number.isFinite(row.payLevel)) facts.push(`消费 Lv.${row.payLevel}`)
     if (Number.isFinite(row.fansClubLevel)) facts.push(`粉丝团 Lv.${row.fansClubLevel}`)
@@ -843,14 +991,18 @@ export function mountMobileDesk() {
         if (!previous || previous.intent !== intent) retryIds.set(retryKey, { id: requestId(), intent })
       }
       command = rowCommand(action, row, { pinned: snapshot.pinnedRowIds.includes(row.id), text: draft?.text, chinese: chinese.text, targetLanguage: submittedLanguage, requestId: retryIds.get(retryKey)?.id })
+      if (action === 'retranslate') { retranslationInFlight.add(row.id); renderCards() }
       if (action === 'approve' && !canApprove(row, draft, chinese, language)) throw Error('请先更新并核对发送预览，再确认发送')
       const result = await client.command(command.action, command.params, row.id)
       if (result.ok) {
+        if (action === 'retranslate' && snapshot.accountId === row.accountId && snapshot.sessionId === row.sessionId && result.data?.id === row.id && result.data.accountId === row.accountId && result.data.sessionId === row.sessionId && result.data.original === row.original) {
+          for (const key of ['rows', 'tasks']) snapshot[key] = snapshot[key].map(value => value.id === row.id && value.original === row.original ? result.data : value)
+        }
         if (action === 'translate' && chineseDrafts.get(row.id)?.text === command.params.chinese) chineseDrafts.get(row.id).needsPreview = false
         if (action === 'translate' && language.revision === submittedLanguageRevision && language.selected === submittedLanguage &&
           (!submittedLanguage || languageCode(result.data?.reply?.targetLanguage) === submittedLanguage)) language.needsPreview = false
         retryIds.delete(retryKey)
-        showNotice(action === 'approve' ? '发送操作已确认' : action === 'translate' ? '翻译已完成，请核对预览后确认发送' : action === 'save' ? '草稿已保存，正在核对最新状态' : action === 'complete' ? '任务已完成' : action === 'defer' ? '已稍后处理' : '钉住状态已更新', false)
+        showNotice(action === 'retranslate' ? result.data?.translation?.manualAttempt?.message || (result.data?.translation?.language === 'und' ? '含义不明确，保留原文' : 'DeepSeek 复译已更新') : action === 'approve' ? '发送操作已确认' : action === 'translate' ? '翻译已完成，请核对预览后确认发送' : action === 'save' ? '草稿已保存，正在核对最新状态' : action === 'complete' ? '任务已完成' : action === 'defer' ? '已稍后处理' : '钉住状态已更新', false)
         // Do not mark a changed draft as saved while its save request was pending.
         if (action === 'save' && drafts.get(row.id)?.text === command.params.text) {
           const saved = result.data?.reply?.text
@@ -862,6 +1014,7 @@ export function mountMobileDesk() {
       }
       await refresh()
     } catch (error) { showNotice(error.message) }
+    finally { retranslationInFlight.delete(row.id); renderCards() }
   }
 
   async function startVoice(card) {
@@ -872,7 +1025,11 @@ export function mountMobileDesk() {
     const result = await client.voice('start', row.id)
     if (voiceSession !== session) return
     if (result.ok && result.data.rowId === row.id && result.data.status === 'recording') session.phase = 'recording'
-    else { session.phase = 'uncertain'; showNotice(result.ok ? '录音状态未确认，请取消后重试' : result.error.message) }
+    else {
+      if (!result.ok && ['VOICE_INVALID_COMMAND', 'VOICE_BUSY', 'VOICE_SERVICE_BUSY', 'VOICE_ALREADY_RECORDING', 'VOICE_NOT_OWNED', 'VOICE_NO_ACTIVE_SESSION', 'VOICE_ROW_NOT_FOUND', 'VOICE_MIC_BLOCKED', 'VOICE_START_NOT_STARTED'].includes(result.error.code)) voiceSession = null
+      else session.phase = 'uncertain'
+      showNotice(result.ok ? '录音状态未确认，请取消后重试' : result.error.message)
+    }
     render()
     if (leaving || session.cancelRequested) await cancelVoice()
   }
@@ -891,7 +1048,7 @@ export function mountMobileDesk() {
         const draft = chineseDraftFor(row)
         if (draft.text === session.baseline) {
           chineseDrafts.set(row.id, { ...draft, text })
-          showNotice('识别文字已填入中文草稿，请检查内容', false)
+          showNotice(result.data.micWarning ? `识别文字已填入中文草稿；${result.data.micWarning}` : '识别文字已填入中文草稿，请检查内容', !!result.data.micWarning)
         } else {
           transcripts.set(row.id, text)
           showNotice('已保留你的修改，可手动追加识别文字', false)
@@ -903,6 +1060,7 @@ export function mountMobileDesk() {
       showNotice(result.ok ? '录音结果未确认，请取消后重试' : result.error.message)
     }
     render()
+    if (!leaving) await runMic('status')
     if (voiceSession === session && (leaving || session.cancelRequested)) await cancelVoice()
     await refresh()
   }
@@ -923,12 +1081,13 @@ export function mountMobileDesk() {
     if (voiceSession !== session) return
     if (result.ok && result.data.status === 'cancelled' && result.data.rowId === session.rowId || !result.ok && result.error.code === 'VOICE_NOT_OWNED') {
       voiceSession = null
-      if (!leaving) showNotice('录音已取消，中文草稿保留', false)
+      if (!leaving) showNotice(result.ok && result.data.micWarning ? result.data.micWarning : '录音已取消，中文草稿保留', result.ok && !!result.data.micWarning)
     } else {
       session.phase = 'uncertain'
       showNotice(result.ok ? '取消录音尚未确认，请重试' : result.error.message)
     }
     render()
+    if (!leaving) await runMic('status')
   }
   window.addEventListener('pagehide', () => {
     leaving = true
