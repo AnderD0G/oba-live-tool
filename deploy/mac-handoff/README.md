@@ -1,3 +1,7 @@
+> **完整 Electron 桌面版请转到 [Mac 完整桌面助播台交接](../mac-desktop/README.md)，下载其中的 `oba-mac-desktop-1.6.7-voice.52.zip` 并按包内 `START-HERE-MAC.md` 安装。**
+>
+> 本目录保留的是较早的 Docker core 交付，只含简化管理页与手机端，未包含完整 Electron 助播台。它不再是本次完整桌面安装的入口；现有容器和数据请保留。
+
 # Mac Docker core handoff — 1.6.7-voice.52
 
 This directory contains the reviewed deployment source snapshot for 2026-10-16. Use the ZIP contents for this version; the repository root on this handoff branch remains the older base checkout.
