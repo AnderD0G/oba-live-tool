@@ -297,7 +297,7 @@ export type AssistantDeskCommand =
   | { action: 'context-save'; params: { accountId: string; expectedRevision: number; context: Omit<AssistantDeskContext, 'revision'> | AssistantDeskContext; requireStopped?: boolean } }
   | { action: 'start'; params: { accountId: string; platform?: string; requestId?: string } }
   | { action: 'timeline' | 'audience' | 'sessions' | 'segments'; params: AssistantDeskFilter }
-  | { action: 'segment-toggle'; params: { accountId: string; requestId?: string; sessionId?: string; expectedOpenSegmentId?: string | null } }
+  | { action: 'segment-toggle'; params: { accountId: string; requestId?: string; runId?: string; label?: string; sessionId?: string; expectedOpenSegmentId?: string | null } }
   | { action: 'segment-rename'; params: { accountId: string; segmentId: string; name: string } }
   | { action: 'segment-summary'; params: { accountId: string; segmentId: string } }
   | { action: 'reply-update'; params: { accountId: string; rowId: string; text: string } }

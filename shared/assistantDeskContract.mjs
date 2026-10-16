@@ -83,7 +83,7 @@ const assistantSchemas = {
   'context-save': object({...account, expectedRevision: integer(), context,requireStopped:{type:'boolean'}},['accountId','expectedRevision','context']),
   start: object({...account, platform: id, requestId: id}, ['accountId']), stop: object(account),
   timeline: object(filter,['accountId']), audience: object(filter,['accountId']), sessions: object(filter,['accountId']), segments: object(filter,['accountId']),
-  'segment-toggle': object({...account,requestId:id,sessionId:id,expectedOpenSegmentId:{anyOf:[id,{type:'null'}]}},['accountId']),
+  'segment-toggle': object({...account,requestId:id,runId:id,label:text(100),sessionId:id,expectedOpenSegmentId:{anyOf:[id,{type:'null'}]}},['accountId']),
   'segment-rename': object({...account,segmentId:id,name:{...text(100),minLength:1}}),
   'segment-summary': object({...account,segmentId:id}),
   'reply-update': object({...account,rowId:id,text:{...text(1000),minLength:1}}),
@@ -120,7 +120,7 @@ const summaries = {
   timeline:'SQL分页查询原文、中文、回复与发送审计；支持完整用户名mentionHandle（可带@，忽略大小写）和完整昵称nickname精确匹配；同名不代表同一人', audience:'按已知等级与稳定身份查询观众资料；支持完整用户名与昵称，匹配记录不自动关联身份', sessions:'查询助播场次',
   'storage-status':'读取正式助播SQLite数据库和每日备份状态；不读取JSON恢复，不触发新备份',
   'storage-backup':'在固定本机目录生成并校验SQLite一致备份；不接受外部路径，不停止采集或发送消息',
-  segments:'查询打点片段', 'segment-toggle':'开始或结束自动编号片段，建议提供requestId保证重试幂等；可成对提供sessionId和expectedOpenSegmentId（无进行中片段时为null）防止旧界面操作另一片段或场次',
+  segments:'查询已有片段历史', 'segment-toggle':'给当前实际 OBS 节目机位的独立录像添加一个章节，已替换旧片段起止；须先开始双路录像，不要求采集。建议传 runId 和 requestId 防串批次与重复，label 可写补货或观众问题；不会同时写另一机位',
   'segment-rename':'事后给片段命名', 'segment-summary':'统计片段关注、礼物和人数快照',
   'reply-update':'编辑审核中的回复草稿', 'reply-approve':'确认当前草稿并发送，必须expectedText和requestId',
   'reply-policy-get':'读取待处理工作区动作回复策略。五种动作，按观众规则标签或优先级筛选。',
@@ -181,7 +181,7 @@ export function validateDeskTool(name,args) {
   const route=deskToolRoute(name);if(!route)throw new Error('助播工具不存在')
   bounded(args);if(!matches(args,route.tool.inputSchema))throw new Error('助播参数不符合schema，请检查类型、范围与必填字段')
   if(route.action==='attention-pin'&&args.expectedPinRevision!==undefined&&args.pinned!==false)throw new Error('expectedPinRevision仅用于取消已有钉住')
-  if(route.action==='segment-toggle'&&Object.hasOwn(args,'sessionId')!==Object.hasOwn(args,'expectedOpenSegmentId'))throw new Error('打点场次与片段状态须一并提供')
+  if(route.action==='segment-toggle'&&(Object.hasOwn(args,'sessionId')||Object.hasOwn(args,'expectedOpenSegmentId')))throw new Error('打点入口已改为录像章节，不再接受旧片段起止参数；请刷新界面')
   if(route.action==='attach-browser'||route.action==='attach-existing-browser') {
     if(route.action==='attach-browser')validateBrowserAttachEndpoint(args.endpoint)
     parseTikTokAttachPage(args.pageUrl)

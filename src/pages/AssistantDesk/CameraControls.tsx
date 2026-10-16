@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from '../../../shared/ipcChannels'
 import type { ObsCameraConfig, ObsCameraStatus, ObsCameraTarget } from '../../../shared/obsCamera'
 import type { ObsEffectCommand, ObsEffectResponse } from '../../../shared/obsEffect'
 import { XiaomiCameraControls } from './XiaomiCameraControls'
+import { CameraRecordingControls } from './CameraRecordingControls'
 
 const labels: Record<ObsCameraTarget, string> = { android: '小米4K', iphone: 'iPhone' }
 function selectedLabel(status?: ObsCameraStatus): string {
@@ -149,6 +150,7 @@ export function CameraControls() {
           </div>
         )}
       </section>
+      <CameraRecordingControls />
       <XiaomiCameraControls />
     </>
   )

@@ -4,6 +4,7 @@ import type {
   ObsCameraStatus,
   ObsCameraTarget,
 } from './obsCamera'
+import type { ObsCameraRecordingState } from './obsCameraRecording'
 
 export interface ObsEffectRule {
   id: string
@@ -69,6 +70,10 @@ export type ObsEffectCommand =
   | { action: 'camera-save'; config: ObsCameraConfig }
   | { action: 'camera-status' }
   | { action: 'camera-switch'; target: ObsCameraTarget }
+  | { action: 'camera-recording-status' }
+  | { action: 'camera-recording-start'; requestId: string }
+  | { action: 'camera-recording-stop'; runId: string; requestId: string }
+  | { action: 'camera-recording-mark'; runId: string; requestId: string; label?: string }
   | { action: 'instant-presentation-state' }
   | { action: 'welcome-presets' }
   | { action: 'instant-presentation-save'; mode: 'wide' | 'focus'; followCamera: boolean }
@@ -82,7 +87,8 @@ export type ObsEffectResponse =
       cameraConfig?: ObsCameraConfig
       cameraStatus?: ObsCameraStatus
       cameraAction?: ObsCameraAction
+      recording?: ObsCameraRecordingState
       instantPresentation?: ObsInstantPresentation
       welcomePresets?: import('./obsWelcome').ObsWelcomePresetAvailability[]
     }
-  | { ok: false; error: string }
+  | { ok: false; error: string; recording?: ObsCameraRecordingState }

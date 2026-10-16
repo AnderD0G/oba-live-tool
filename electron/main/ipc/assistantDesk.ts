@@ -19,12 +19,11 @@ import { typedIpcMainHandle } from '../utils/ipc'
 import { requireAnalysisRoomReady, registerAnalysisShutdown } from './analysisRoom'
 import { assistantProviderModel, interpretAssistant, translateAssistantDraft } from './deepSeekAuto'
 import { dispatchAssistantLocalEffects,reserveEffectSequence } from './hooks'
-import { getObsEffectService, peekObsEffectOperationQueueState } from './obsEffect'
+import { getObsEffectService, markCurrentObsCamera, markCurrentObsCameraFromShortcut, peekObsEffectOperationQueueState } from './obsEffect'
 
 let service: AssistantDeskService | undefined
 let localTranslator: ChromeLocalTranslationService | undefined
 let sourceAudit: CaptureSourceAudit | undefined
-let markedAccount: string | undefined
 let diagnostics: ReturnType<typeof createAssistantDiagnostics> | undefined
 export function getAssistantDesk() {
   if (!service) {
@@ -146,6 +145,12 @@ export async function executeAssistantDeskCommand(
 ): Promise<AssistantDeskResult> {
   try {
     const command = validateDeskHttp('/assistant/command', input) as AssistantDeskCommand
+    if (command.action === 'segment-toggle') {
+      const result = await markCurrentObsCamera(command.params)
+      return result.ok
+        ? { ok: true, data: result.recording }
+        : { ok: false, error: { code: 'OBS_RECORDING_MARK_UNCONFIRMED', message: result.error } }
+    }
     if (command.action === 'start') {
       const actualPlatform = accountManager.accountSessions
         .get(command.params.accountId)
@@ -160,7 +165,6 @@ export async function executeAssistantDeskCommand(
     const result = await getAssistantDesk().execute(command)
     if(result.ok&&command.action==='policy-save'&&audienceEffectSync)
       void Promise.resolve().then(()=>audienceEffectSync!(command.params.accountId)).catch(error=>console.error('Audience effect reconciliation:',error instanceof Error?error.message:String(error)))
-    if (result.ok && command.action === 'start') markedAccount = command.params.accountId
     if (result.ok && command.action === 'state') return {
       ...result,
       data: { ...(result.data as AssistantDeskState), sourceAudit: sourceAudit?.snapshot(command.params.accountId), obsOperations: peekObsEffectOperationQueueState() },
@@ -208,11 +212,7 @@ export function setupAssistantDeskIpc() {
     finally { await Promise.allSettled([localTranslator?.shutdown(), sourceAudit?.shutdown(), diagnostics?.flush()]) }
   })
   globalShortcut.register('CommandOrControl+Shift+M', () => {
-    if (markedAccount)
-      void executeAssistantDeskCommand({
-        action: 'segment-toggle',
-        params: { accountId: markedAccount, requestId: randomUUID() },
-      })
+    void markCurrentObsCameraFromShortcut().catch(error => console.error('OBS 打点未确认', error instanceof Error ? error.message : String(error)))
   })
   app.on('will-quit', () => globalShortcut.unregister('CommandOrControl+Shift+M'))
 }

@@ -218,6 +218,15 @@ export function createMobileClient(options = {}) {
         !(command.action === 'status' && Object.keys(command).length === 1 || command.action === 'switch' && Object.keys(command).length === 2 && ['android', 'iphone'].includes(command.target))) return failure('UNSUPPORTED', '机位操作不可用')
       return mutate('./api/camera', command, 'control:camera', 20_000)
     },
+    async cameraRecording(command) {
+      if (!command || typeof command !== 'object' || Array.isArray(command)) return failure('UNSUPPORTED', '录像打点操作不可用')
+      const id = value => typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\s\u0000-\u001f\u007f]/.test(value)
+      const valid = command.action === 'status' ? Object.keys(command).length === 1
+        : command.action === 'mark' && Object.keys(command).every(key => ['action', 'runId', 'requestId', 'label'].includes(key)) && id(command.runId) && id(command.requestId) &&
+          (command.label === undefined || typeof command.label === 'string' && command.label.length <= 100 && !/[\u0000-\u001f\u007f]/.test(command.label))
+      if (!valid) return failure('UNSUPPORTED', '录像打点操作不可用')
+      return mutate('./api/camera-recording', command, 'control:camera-recording', 20_000)
+    },
     async studioMic(action) {
       if (!['status', 'toggle', 'align-open', 'mute', 'unmute'].includes(action)) return failure('UNSUPPORTED', '麦克风操作不可用')
       return mutate('./api/studio-mic', { action }, 'control:studio-mic', 12_000)
@@ -309,8 +318,7 @@ export function mountMobileDesk() {
   const transcripts = new Map()
   const retranslationInFlight = new Set()
   let voiceSession = null
-  let markerIntent = null
-  let markerNotBefore = 0
+  let cameraRecording = null, recordingFresh = false, recordingError = ''
   let leaving = false
   let cameraState = null, micState = null, xiaomiState = null, xiaomiSettings = null, xiaomiPreview = null
   let controlsInitialized = false
@@ -468,15 +476,18 @@ export function mountMobileDesk() {
   const followButtons = { live: followButton, tasks: taskFollowButton }
   const speedInputs = { live: liveSpeed, tasks: taskSpeed }
   const latestButtons = { live: latestButton, tasks: taskLatestButton }
-  const markerBar = element('section', 'marker-bar')
-  markerBar.setAttribute('aria-label', '片段打点')
-  const markerInfo = element('div', 'marker-info')
-  const markerLabel = element('span', 'marker-label', '直播片段')
-  const markerStatus = element('strong', 'marker-status', '等待电脑端状态')
-  markerInfo.append(markerLabel, markerStatus)
-  const markerButton = button('开始打点', 'marker-button')
-  markerButton.disabled = true
-  markerBar.append(markerInfo, markerButton)
+  const recordingBar = element('section', 'recording-bar')
+  recordingBar.setAttribute('aria-label', '录像章节')
+  const recordingTitle = element('strong', 'recording-title', '录像章节')
+  const recordingCheck = button('刷新录像', 'text-button')
+  const recordingInput = element('input', 'recording-label')
+  recordingInput.setAttribute('aria-label', '录像章节标题')
+  recordingInput.placeholder = '标题可选：补货、观众问题'; recordingInput.maxLength = 100
+  const recordingMark = button('打点当前机位', 'recording-mark')
+  recordingMark.disabled = true
+  const recordingNotice = element('p', 'recording-note', '正在读取电脑录像状态')
+  const recordingLast = element('p', 'recording-last'); recordingLast.hidden = true
+  recordingBar.append(recordingTitle, recordingCheck, recordingInput, recordingMark, recordingNotice, recordingLast)
   const navigation = element('nav', 'bottom-nav')
   navigation.setAttribute('aria-label', '主导航')
   const liveTab = button('', 'nav-tab active')
@@ -490,7 +501,7 @@ export function mountMobileDesk() {
   taskTab.append(taskIcon, element('span', '', '任务'))
   liveTab.setAttribute('aria-current', 'page')
   navigation.append(liveTab, taskTab)
-  shell.append(header, controls, notice, voiceBar, workspace, markerBar, navigation)
+  shell.append(header, controls, notice, voiceBar, workspace, recordingBar, navigation)
   root.replaceChildren(shell)
 
   const overlay = element('div', 'sheet-overlay')
@@ -555,11 +566,6 @@ export function mountMobileDesk() {
   }
   const client = createMobileClient({
     onSnapshot(value) {
-      if (markerIntent && markerIntent.phase !== 'pending') {
-        const changedScene = value.accountId !== markerIntent.accountId || value.sessionId !== markerIntent.sessionId || !value.collecting
-        const changedMarker = (value.marker?.open?.id ?? null) !== markerIntent.expectedOpenSegmentId
-        if (changedScene || markerIntent.phase === 'confirmed' || changedMarker) markerIntent = null
-      }
       snapshot = value
       receivedAt = Date.now()
       if (loadedAccount !== value.accountId) {
@@ -613,9 +619,60 @@ export function mountMobileDesk() {
     previewButton.setAttribute('aria-pressed', String(previewEnabled))
     if (connected && !controlsInitialized) {
       controlsInitialized = true
-      queueMicrotask(() => { void runCamera({ action: 'status' }); void runMic('status') })
+      queueMicrotask(() => { void runCamera({ action: 'status' }); void runMic('status'); void runRecording({ action: 'status' }) })
     }
   }
+  function renderRecording() {
+    const pending = client.isPending('control:camera-recording')
+    const available = client.isConnected() && recordingFresh && cameraRecording?.running && cameraRecording.runId && cameraRecording.cameras?.some(camera => camera.active && camera.owned)
+    recordingCheck.disabled = !client.isConnected() || pending
+    recordingInput.disabled = pending
+    recordingMark.disabled = !available || pending
+    recordingMark.setAttribute('aria-busy', String(pending))
+    recordingTitle.textContent = pending ? '录像章节 · 核对中' : '录像章节'
+    const cameraText = cameraRecording?.cameras?.map(camera => `${camera.target === 'iphone' ? 'iPhone' : '小米'}${camera.active ? camera.owned ? '录像中' : '外部录像' : '未录像'}`).join(' · ')
+    recordingNotice.textContent = recordingError || !recordingFresh ? recordingError || '录像状态待确认，请刷新核对' : cameraRecording?.running ? `${cameraText} · 打点只给实际节目机位` : '请在电脑端开始两路独立录像'
+    recordingNotice.classList.toggle('has-error', Boolean(recordingError))
+    const last = cameraRecording?.marks?.at(-1)
+    recordingLast.hidden = !last
+    if (last) {
+      const seconds = Math.max(0, Math.floor(last.offsetMs / 1000))
+      const time = [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60].map(value => String(value).padStart(2, '0')).join(':')
+      const status = { confirmed: 'OBS 已接受章节', pending: '正在提交', unconfirmed: '结果待确认', failed: '提交失败' }[last.status] || '结果待确认'
+      recordingLast.textContent = `${last.chapterName} · ${last.target === 'iphone' ? 'iPhone' : '小米'} · 约${time} · ${status}`
+      recordingLast.title = '时间为采样估计，以文件内章节为准；文件与章节索引保存在电脑端。'
+    }
+  }
+  async function runRecording(command, preserveError = false) {
+    if (client.isPending('control:camera-recording')) return
+    if (!preserveError) recordingError = ''
+    recordingFresh = false
+    const result = await client.cameraRecording(command)
+    const state = result.ok ? result.data : result.recording
+    if (state && typeof state.running === 'boolean' && Array.isArray(state.cameras) && Array.isArray(state.marks)) {
+      cameraRecording = state
+      recordingFresh = true
+    }
+    if (!result.ok) recordingError = result.error.message
+    else if (!recordingFresh) recordingError = '录像状态未确认，请刷新后核对'
+    else if (!preserveError) recordingError = state.message || ''
+    if (command.action === 'mark') {
+      const receipt = state?.marks?.find(mark => mark.runId === command.runId && mark.requestId === command.requestId)
+      if (result.ok && receipt?.status === 'confirmed') recordingInput.value = ''
+      else recordingError = result.ok ? '章节结果未确认，请刷新后核对' : result.error.message
+    }
+    renderRecording()
+    if (command.action === 'mark' && recordingError) {
+      await client.poll()
+      if (client.isConnected()) await runRecording({ action: 'status' }, true)
+    }
+  }
+  recordingCheck.addEventListener('click', () => void runRecording({ action: 'status' }))
+  recordingMark.addEventListener('click', () => {
+    if (recordingMark.disabled || !cameraRecording?.runId) return
+    const label = recordingInput.value.trim()
+    void runRecording({ action: 'mark', runId: cameraRecording.runId, requestId: requestId(), ...(label ? { label } : {}) })
+  })
   async function runCamera(command) {
     if (client.isPending('control:camera')) return
     const result = await client.camera(command)
@@ -829,32 +886,8 @@ export function mountMobileDesk() {
       voiceBarCancel.disabled = !connected || voiceSession.phase === 'cancelling' || voiceSession.cancelRequested && client.isPending(voiceSession.rowId)
     }
     renderCountdown()
-    renderMarker()
+    renderRecording()
     renderControls()
-  }
-
-  function renderMarker() {
-    const marker = snapshot?.marker
-    const open = marker?.open
-    const active = Boolean(snapshot?.collecting && snapshot.sessionId && marker)
-    const pending = markerIntent && markerIntent.phase !== 'uncertain'
-    const uncertain = markerIntent?.phase === 'uncertain'
-    markerBar.dataset.recording = String(Boolean(open))
-    markerBar.classList.toggle('is-recording', Boolean(open))
-    markerBar.classList.toggle('is-uncertain', uncertain)
-    markerLabel.textContent = uncertain ? '打点结果待确认' : open ? '片段进行中' : '直播片段'
-    let text = !snapshot ? '等待电脑端状态' : active ? `已完成 ${marker?.completed ?? 0} 段` : snapshot.captureStatus === 'storage-error' ? '保存异常，打点暂不可用' : (snapshot.captureActive ?? snapshot.collecting) ? '正在同步打点状态' : '请在电脑端开始采集'
-    if (open && active) {
-      const elapsed = Math.max(0, Math.floor((snapshot.serverNow + Math.max(0, Date.now() - receivedAt) - open.startedAt) / 1000))
-      text = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')} · 已完成 ${marker.completed} 段`
-    }
-    markerStatus.textContent = uncertain ? `${text} · 待确认` : text
-    const ending = uncertain ? Boolean(markerIntent.expectedOpenSegmentId) : Boolean(open)
-    const label = ending ? '结束打点' : '开始打点'
-    markerButton.setAttribute('aria-label', label)
-    markerButton.setAttribute('aria-busy', String(Boolean(pending)))
-    markerButton.textContent = pending ? markerIntent.phase === 'confirmed' ? '核对打点状态…' : '提交打点中…' : uncertain ? `重试${label}` : label
-    markerButton.disabled = !client.isConnected() || !active || Boolean(pending) || client.isPending('segment-toggle') || Date.now() < markerNotBefore
   }
 
   function renderCountdown() {
@@ -1267,40 +1300,6 @@ export function mountMobileDesk() {
   })
   window.addEventListener('pageshow', () => { leaving = false })
 
-  markerButton.addEventListener('click', async () => {
-    if (markerButton.disabled || Date.now() < markerNotBefore || !snapshot?.collecting || !snapshot.sessionId) return
-    try {
-      // Keep a very fast acknowledgement from turning an accidental double tap into start + end.
-      markerNotBefore = Date.now() + 600
-      // An explicit retry reuses the original intent; a timeout must never become a second toggle.
-      if (!markerIntent) markerIntent = {
-        accountId: snapshot.accountId, sessionId: snapshot.sessionId,
-        expectedOpenSegmentId: snapshot.marker?.open?.id ?? null, requestId: requestId(), phase: 'pending',
-      }
-      const intent = markerIntent
-      intent.phase = 'pending'; renderMarker()
-      const result = await client.command('segment-toggle', {
-        requestId: intent.requestId, sessionId: intent.sessionId, expectedOpenSegmentId: intent.expectedOpenSegmentId,
-      }, 'segment-toggle')
-      if (markerIntent !== intent) return
-      if (result.ok) {
-        intent.phase = 'confirmed'
-        showNotice('打点操作已确认，正在核对当前片段', false)
-      } else if (['SEGMENT_CHANGED', 'MOBILE_SESSION_CHANGED', 'NO_ACTIVE_SESSION', 'INVALID_REQUEST', 'UNSUPPORTED'].includes(result.error.code)) {
-        markerIntent = null
-        showNotice(result.error.message)
-      } else {
-        intent.phase = 'uncertain'
-        showNotice(result.error.message)
-      }
-      renderMarker()
-      await refresh()
-    } catch (error) {
-      if (markerIntent) markerIntent.phase = 'uncertain'
-      showNotice(error.message); renderMarker()
-    }
-  })
-
   countdownButton.addEventListener('click', async () => {
     const state = countdownState(snapshot, receivedAt, Date.now())
     if (!state || countdownButton.disabled) return
@@ -1314,6 +1313,7 @@ export function mountMobileDesk() {
     clearTimeout(refreshTimer)
     if (document.hidden) { refreshTimer = setTimeout(refresh, 10_000); return }
     await client.poll()
+    if (client.isConnected()) void runRecording({ action: 'status' }, true)
     refreshTimer = setTimeout(refresh, 2000)
   }
   retryButton.addEventListener('click', () => void refresh())
@@ -1435,7 +1435,7 @@ export function mountMobileDesk() {
         }
       } else scrollRemainder[mode] = 0
     }
-    if (now - countdownTick > 500) { countdownTick = now; renderCountdown(); renderMarker() }
+    if (now - countdownTick > 500) { countdownTick = now; renderCountdown() }
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)

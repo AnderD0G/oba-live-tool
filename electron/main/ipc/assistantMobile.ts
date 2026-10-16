@@ -27,6 +27,9 @@ export function setupAssistantMobileIpc() {
       voice: command => getAssistantVoice().execute(command),
       camera: command => executeObsEffectCommand(command.action === 'status'
         ? { action: 'camera-status' } : { action: 'camera-switch', target: command.target }),
+      cameraRecording: command => executeObsEffectCommand(command.action === 'status'
+        ? { action: 'camera-recording-status' }
+        : { action: 'camera-recording-mark', runId: command.runId, requestId: command.requestId, ...(command.label === undefined ? {} : { label: command.label }) }),
       studioMic: command => getStudioMicHotkey().execute(command),
       xiaomi: executeXiaomiCameraCommand,
     }),

@@ -3,7 +3,6 @@ import {
   Link2,
   MessageSquare,
   Play,
-  Save,
   Search,
   Square,
   Unlink,
@@ -62,32 +61,11 @@ function SegmentRow({
   busy: boolean
   request: DeskRequest
 }) {
-  const [name, setName] = useState<{ base: string; value: string }>()
-  const draft = name?.base === segment.name ? name.value : segment.name
   const [summary, setSummary] = useState<AssistantDeskSegmentSummary>()
   return (
     <div className="assistant-segment">
       <div className="assistant-segment-title">
-        <Input
-          aria-label={`片段名称 ${segment.name}`}
-          value={draft}
-          maxLength={100}
-          onChange={event => setName({ base: segment.name, value: event.target.value })}
-        />
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || !draft.trim() || draft === segment.name}
-          onClick={() =>
-            void request({
-              action: 'segment-rename',
-              params: { accountId, segmentId: segment.id, name: draft.trim() },
-            })
-          }
-        >
-          <Save />
-          改名
-        </Button>
+        <strong>{segment.name}</strong>
         <Button
           size="sm"
           variant="ghost"
@@ -268,7 +246,6 @@ export function ReviewPanel({
   accountId,
   state,
   busy,
-  markPending = false,
   request,
 }: {
   accountId: string
@@ -302,25 +279,8 @@ export function ReviewPanel({
   const [linkTarget, setLinkTarget] = useState('')
   const [notice, setNotice] = useState('')
   const [recording, setRecording] = useState<ReturnType<typeof recordingPresentation>>()
-  const [marking, setMarking] = useState(false)
-  const markingRef = useRef(false)
   const serial = useRef(0)
-  const open = state.segments.find(
-    segment => !segment.endedAt && segment.sessionId === state.activeSession?.id && segment.captureSessionId === state.activeSession?.captureSessionId,
-  )
   const capturing = state.activeSession?.status === 'collecting'
-  const currentRun = currentCaptureRun(state.activeSession)
-  const toggleMark = async () => {
-    if (markingRef.current || markPending || !capturing) return
-    markingRef.current = true
-    setMarking(true)
-    try {
-      await request({ action: 'segment-toggle', params: { accountId, requestId: crypto.randomUUID() } })
-    } finally {
-      markingRef.current = false
-      setMarking(false)
-    }
-  }
   const query = async (nextTab = tab, cursor?: string, draftOverride?: HistoryFilterDraft) => {
     if (queryingRef.current) return
     queryingRef.current = true
@@ -410,38 +370,25 @@ export function ReviewPanel({
           <span className="assistant-step">04 · 留下证据</span>
           <h2>
             <Bookmark size={18} />
-            打点、录像与复盘
+            历史录像与复盘
           </h2>
         </div>
         <span className="assistant-muted">稳定 UUID · 跨场次记录</span>
       </div>
       <div className="assistant-review-tools">
         <div className="assistant-mark-block">
-          <h3>片段打点</h3>
+          <h3>历史片段范围</h3>
           <p className="assistant-muted">
-            开始后自动命名片段 1、片段 2，可事后改名；停止采集会结束开放片段。
+            已有片段保留供复盘。当前打点请使用上方“双路独立录像”，章节只记到实际节目机位。
           </p>
-          <p className="assistant-muted" role="status">
-            {capturing
-              ? `打点位置：当前采集 · ${captureRoomLabel(currentRun)} · ${displayTime(currentRun?.startedAt, true)} · 场次 ${state.activeSession!.id.slice(0, 8)}`
-              : '当前没有采集中的场次；开始采集后即可打点。'}
-          </p>
-          <Button
-            disabled={marking || markPending || !capturing}
-            variant={open ? 'outline' : 'default'}
-            onClick={() => void toggleMark()}
-          >
-            {open ? <Square /> : <Bookmark />}
-            {open ? `结束 ${open.name}` : '开始片段打点'}
-          </Button>
         </div>
-        <div className="assistant-record-block">
-          <h3>
+        <details className="assistant-record-block">
+          <summary>
             <Video size={16} />
-            OBS 录像与本地特效
-          </h3>
+            主画面录像（可选）
+          </summary>
           <p className="assistant-muted">
-            录像路径关联到当前场次，使用已配置的本地 OBS 连接。本地欢迎/礼物特效
+            只录制节目合成画面；双机位各录一份请使用上方“双路独立录像”。录像路径关联到当前场次。本地欢迎/礼物特效
             {state.context.localEffectsEnabled ? '已开启' : '已关闭'}，可在助手设置中修改。
           </p>
           <div className="assistant-actions">
@@ -473,7 +420,7 @@ export function ReviewPanel({
               )}
             </p>
           )}
-        </div>
+        </details>
       </div>
       <form
         className="assistant-history-filters"

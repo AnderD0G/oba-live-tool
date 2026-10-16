@@ -1,6 +1,7 @@
 import type { AssistantDeskMarkerStatus, AssistantDeskResult, AssistantDeskRow, AssistantDeskState } from './assistantDesk'
 import type { AudiencePolicyTier } from './assistantAudiencePolicy'
 import type { ObsCameraTarget } from './obsCamera'
+import type { ObsCameraRecordingCamera, ObsCameraRecordingCommand, ObsCameraRecordingMark, ObsCameraRecordingState } from './obsCameraRecording'
 
 export const MOBILE_ASSISTANT_ACTIONS = ['attention-pin', 'attention-defer', 'reply-dismiss', 'attention-countdown', 'reply-update', 'reply-translate', 'reply-approve', 'segment-toggle', 'translate-retry'] as const
 export type MobileAssistantAction = typeof MOBILE_ASSISTANT_ACTIONS[number]
@@ -14,6 +15,13 @@ export interface MobileAssistantAccessStatus {
 export interface MobileAssistantAccessCommand { action: 'status' | 'start' | 'stop'; accountId: string }
 export type MobileAssistantAccessResult = AssistantDeskResult<MobileAssistantAccessStatus>
 export type MobileAssistantCameraCommand = { action: 'status' } | { action: 'switch'; target: ObsCameraTarget }
+export type MobileCameraRecordingCommand = Extract<ObsCameraRecordingCommand, { action: 'status' | 'mark' }>
+/** Phone projections contain run ownership and chapter receipts, never local paths or OBS settings. */
+export interface MobileCameraRecordingState extends Pick<ObsCameraRecordingState, 'ok' | 'ready' | 'running' | 'runId' | 'startedAt'> {
+  cameras: Pick<ObsCameraRecordingCamera, 'target' | 'active' | 'owned'>[]
+  marks: Pick<ObsCameraRecordingMark, 'runId' | 'requestId' | 'sequence' | 'target' | 'label' | 'chapterName' | 'offsetMs' | 'requestedAt' | 'status'>[]
+  message?: string
+}
 export interface MobileAssistantCameraState {
   available: boolean
   selected?: ObsCameraTarget | 'both' | 'none'

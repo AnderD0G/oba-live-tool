@@ -8,7 +8,7 @@ import { compareAssistantAttentionRows } from '../../../shared/assistantAttentio
 import type { AssistantDeskCommand, AssistantDeskResult, AssistantDeskRow, AssistantDeskState } from '../../../shared/assistantDesk'
 import { validateDeskHttp } from '../../../shared/assistantDeskContract.mjs'
 import type { AssistantVoiceCommand, AssistantVoiceResult } from '../../../shared/assistantVoice'
-import { MOBILE_ASSISTANT_ACTIONS, type MobileAssistantAccessStatus, type MobileAssistantDeskSnapshot, type MobileAssistantCameraCommand, type MobileAssistantCameraState, type MobileStudioMicCommand } from '../../../shared/mobileAssistantDesk'
+import { MOBILE_ASSISTANT_ACTIONS, type MobileAssistantAccessStatus, type MobileAssistantDeskSnapshot, type MobileAssistantCameraCommand, type MobileAssistantCameraState, type MobileStudioMicCommand, type MobileCameraRecordingCommand, type MobileCameraRecordingState } from '../../../shared/mobileAssistantDesk'
 import type { ObsEffectResponse } from '../../../shared/obsEffect'
 import type { StudioMicHotkeyResult } from '../../../shared/studioMicHotkey'
 import type { XiaomiCameraCommand, XiaomiCameraResult } from '../../../shared/xiaomiCamera'
@@ -21,6 +21,7 @@ export interface MobileAssistantDeskServerOptions {
   execute: (command: AssistantDeskCommand) => Promise<AssistantDeskResult>
   voice?: (command: AssistantVoiceCommand) => Promise<AssistantVoiceResult>
   camera?: (command: MobileAssistantCameraCommand) => Promise<ObsEffectResponse>
+  cameraRecording?: (command: MobileCameraRecordingCommand) => Promise<ObsEffectResponse>
   studioMic?: (command: MobileStudioMicCommand) => Promise<StudioMicHotkeyResult>
   xiaomi?: (command: Exclude<XiaomiCameraCommand, { action: 'config-get' } | { action: 'config-save' } | { action: 'preview-cancel' }>, signal?: AbortSignal) => Promise<XiaomiCameraResult>
   voiceScene?: (accountId: string, rowId: string) => Promise<Pick<AssistantDeskState, 'activeSession' | 'rows' | 'attention'>>
@@ -189,7 +190,7 @@ const SAFE_MESSAGES: Record<string, string> = {
   VOICE_START_NOT_STARTED: '豆包录音未开始，请检查语音服务和麦克风权限后重试',
 }
 
-function failure(code: string, message = '操作未完成，请刷新后重试'): AssistantDeskResult {
+function failure(code: string, message = '操作未完成，请刷新后重试'): Extract<AssistantDeskResult, { ok: false }> {
   return { ok: false, error: { code, message } }
 }
 
@@ -252,6 +253,38 @@ export class MobileAssistantDeskServer {
 
   constructor(private readonly options: MobileAssistantDeskServerOptions) {
     validateDeskHttp('/assistant/command', { action: 'state', params: { accountId: options.accountId } })
+  }
+
+  private async cameraRecordingCommand(body: unknown): Promise<AssistantDeskResult<MobileCameraRecordingState> & { recording?: MobileCameraRecordingState }> {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return failure('MOBILE_INVALID_COMMAND', '录像打点参数无效')
+    const input = body as Record<string, unknown>
+    const id = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\s\u0000-\u001f\u007f]/.test(value)
+    const valid = input.action === 'status' ? Object.keys(input).length === 1
+      : input.action === 'mark' && Object.keys(input).every(key => ['action', 'runId', 'requestId', 'label'].includes(key)) && id(input.runId) && id(input.requestId) &&
+        (input.label === undefined || typeof input.label === 'string' && input.label.length <= 100 && !/[\u0000-\u001f\u007f]/.test(input.label))
+    if (!valid) return failure('MOBILE_INVALID_COMMAND', '录像打点参数无效')
+    if (!this.options.cameraRecording) return failure('MOBILE_CAMERA_RECORDING_UNAVAILABLE', '独立录像未就绪，请在电脑端检查')
+    const result = await this.options.cameraRecording(input as unknown as MobileCameraRecordingCommand)
+    const raw = result.recording
+    let recording: MobileCameraRecordingState | undefined
+    if (raw && typeof raw.ok === 'boolean' && typeof raw.ready === 'boolean' && typeof raw.running === 'boolean' && Array.isArray(raw.cameras) && Array.isArray(raw.marks)) {
+      recording = {
+        ok: raw.ok, ready: raw.ready, running: raw.running,
+        ...(id(raw.runId) ? { runId: raw.runId } : {}),
+        ...(Number.isSafeInteger(raw.startedAt) && raw.startedAt! >= 0 ? { startedAt: raw.startedAt } : {}),
+        cameras: raw.cameras.filter(camera => ['iphone', 'android'].includes(camera.target) && typeof camera.active === 'boolean' && typeof camera.owned === 'boolean')
+          .map(camera => ({ target: camera.target, active: camera.active, owned: camera.owned })),
+        marks: raw.marks.slice(-100).filter(mark => id(mark.runId) && id(mark.requestId) && Number.isSafeInteger(mark.sequence) && mark.sequence >= 0 && ['iphone', 'android'].includes(mark.target) &&
+          typeof mark.label === 'string' && mark.label.length <= 100 && typeof mark.chapterName === 'string' && mark.chapterName.length <= 256 &&
+          Number.isSafeInteger(mark.offsetMs) && mark.offsetMs >= 0 && Number.isSafeInteger(mark.requestedAt) && mark.requestedAt >= 0 && ['pending', 'confirmed', 'unconfirmed', 'failed'].includes(mark.status))
+          .map(mark => ({ runId: mark.runId, requestId: mark.requestId, sequence: mark.sequence, target: mark.target, label: mark.label, chapterName: mark.chapterName, offsetMs: mark.offsetMs, requestedAt: mark.requestedAt, status: mark.status })),
+        ...(raw.error || raw.lastMarkError ? { message: '部分录像或章节结果异常，请在电脑端核对' } : {}),
+      }
+    }
+    if (!result.ok || !recording) return { ...failure('MOBILE_CAMERA_RECORDING_UNAVAILABLE', '录像操作结果未确认，请刷新状态并在电脑端核对'), ...(recording ? { recording } : {}) }
+    if (input.action === 'mark' && !recording.marks.some(mark => mark.runId === input.runId && mark.requestId === input.requestId && mark.status === 'confirmed'))
+      return { ...failure('MOBILE_CAMERA_RECORDING_UNCONFIRMED', '章节结果未确认，请刷新状态后核对，勿重复提交'), recording }
+    return { ok: true, data: recording }
   }
 
   private async cameraCommand(body: unknown): Promise<AssistantDeskResult<MobileAssistantCameraState>> {
@@ -453,7 +486,7 @@ export class MobileAssistantDeskServer {
         return result.ok ? send(200, { ok: true, data: projectMobileAssistantState(result.data as AssistantDeskState, this.options.accountId, this.options.accountName, (this.options.now ?? Date.now)()) }) : send(400, publicFailure(result))
       }
       const isVoice = path === `${base}api/voice`
-      const control = path === `${base}api/camera` ? 'camera' : path === `${base}api/studio-mic` ? 'studio-mic' : path === `${base}api/xiaomi` ? 'xiaomi' : undefined
+      const control = path === `${base}api/camera` ? 'camera' : path === `${base}api/camera-recording` ? 'camera-recording' : path === `${base}api/studio-mic` ? 'studio-mic' : path === `${base}api/xiaomi` ? 'xiaomi' : undefined
       if (!isVoice && !control && path !== `${base}api/command`) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
       // Image frames are a high-frequency read stream, not operator actions.
       // Defer Xiaomi tracing until its body distinguishes a frame from a control.
@@ -483,7 +516,7 @@ export class MobileAssistantDeskServer {
         if (controller) response.once('close', abandoned)
         let result: AssistantDeskResult
         try {
-          result = await (control === 'camera' ? this.cameraCommand(body) : control === 'xiaomi' ? this.xiaomiCommand(body, controller?.signal) : this.studioMicCommand(body))
+          result = await (control === 'camera' ? this.cameraCommand(body) : control === 'camera-recording' ? this.cameraRecordingCommand(body) : control === 'xiaomi' ? this.xiaomiCommand(body, controller?.signal) : this.studioMicCommand(body))
         } finally {
           if (controller) response.removeListener('close', abandoned)
         }

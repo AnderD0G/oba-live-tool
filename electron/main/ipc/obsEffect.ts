@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { app } from 'electron'
+import { app, Notification } from 'electron'
 import { IPC_CHANNELS } from '../../../shared/ipcChannels'
 import {
   defaultObsCameraConfig,
@@ -19,7 +19,10 @@ import {
 import { createLogger } from '../logger'
 import { JsonLedger } from '../services/JsonLedger'
 import { ObsCameraSwitcher } from '../services/ObsCameraSwitcher'
+import { ObsCameraRecordingControl } from '../services/ObsCameraRecordingControl'
 import { ObsEnterEffectService } from '../services/ObsEnterEffectService'
+import { ObsWebSocketClient } from '../services/ObsWebSocketClient'
+import type { ObsCameraRecordingCommand } from '../../../shared/obsCameraRecording'
 import { typedIpcMainHandle } from '../utils/ipc'
 import { recordAudit } from './audit'
 
@@ -35,6 +38,60 @@ let shuttingDown = false
 let shutdownPromise: Promise<void> | undefined
 let handlersSetup = false
 let presentationLedger: JsonLedger<ObsInstantPresentation> | null = null
+let cameraRecording: ObsCameraRecordingControl | undefined
+
+function getCameraRecording() {
+  cameraRecording ??= new ObsCameraRecordingControl(
+    new ObsWebSocketClient(),
+    () => {
+      const { url, password } = getObsEffectLedger().data
+      return { url, password }
+    },
+    () => structuredClone(getObsCameraLedger().data),
+    path.join(app.getPath('userData'), 'obs-camera-recordings'),
+  )
+  return cameraRecording
+}
+
+function recordingOwnsOutputs() {
+  const state = cameraRecording?.peekState()
+  return !!state && (state.running || state.cameras.some(camera => camera.active && camera.owned))
+}
+
+/** Shares the camera switch queue: read actual program and write its chapter as one operation. */
+export function executeObsCameraRecording(command: ObsCameraRecordingCommand) {
+  return enqueueCamera(async (): Promise<ObsEffectResponse> => {
+    if (shuttingDown) throw new Error('应用正在关闭，录像控制已停止接收操作')
+    const recording = await getCameraRecording().execute(command)
+    return recording.ok
+      ? { ok: true, recording }
+      : { ok: false, error: recording.error || recording.lastMarkError || 'OBS 尚未确认录像操作', recording }
+  })
+}
+
+/** The same key also works while OBS is foreground; it does not require Computer Use. */
+export async function markCurrentObsCamera(input: { requestId?: string; runId?: string; label?: string } = {}): Promise<ObsEffectResponse> {
+  return enqueueCamera(async () => {
+    const control = getCameraRecording()
+    const runId = input.runId ?? control.peekRunId()
+    if (shuttingDown || !control.peekState().running || !runId)
+      return { ok: false, error: '请先在“双路独立录像”开始录像，再给当前机位打点' }
+    const recording = await control.execute({ action: 'mark', runId, requestId: input.requestId ?? randomUUID(), ...(input.label === undefined ? {} : { label: input.label }) })
+    return recording.ok ? { ok: true, recording } : { ok: false, error: recording.error || recording.lastMarkError || '录像打点未确认', recording }
+  })
+}
+
+export async function markCurrentObsCameraFromShortcut() {
+  const result = await markCurrentObsCamera()
+  const mark = result.recording?.marks.at(-1)
+  if (Notification.isSupported()) new Notification({
+    title: result.ok && mark?.status === 'confirmed' ? 'OBS 已接受录像打点' : '录像打点未确认',
+    body: result.ok && mark?.status === 'confirmed'
+      ? `${mark.target === 'iphone' ? 'iPhone' : '小米4K'} · ${mark.chapterName}`
+      : !result.ok ? result.error : '请回 OBA 核对当前录像状态', silent: true,
+  }).show()
+  return result
+}
 
 function getPresentationLedger() {
   if (!presentationLedger) presentationLedger = new JsonLedger(
@@ -129,6 +186,14 @@ export async function executeObsEffectCommand(
     if (shuttingDown) throw new Error('应用正在关闭，OBS 控制已停止接收操作')
     if (!command || typeof command.action !== 'string') throw new Error('无效操作')
     switch (command.action) {
+      case 'camera-recording-status':
+        return await executeObsCameraRecording({ action: 'status' })
+      case 'camera-recording-start':
+        return await executeObsCameraRecording({ action: 'start', requestId: command.requestId })
+      case 'camera-recording-stop':
+        return await executeObsCameraRecording({ action: 'stop', runId: command.runId, requestId: command.requestId })
+      case 'camera-recording-mark':
+        return await executeObsCameraRecording({ action: 'mark', runId: command.runId, requestId: command.requestId, ...(command.label === undefined ? {} : { label: command.label }) })
       case 'instant-presentation-state':
         return { ok: true, instantPresentation: structuredClone(getPresentationLedger().data) }
       case 'instant-presentation-save':
@@ -156,6 +221,7 @@ export async function executeObsEffectCommand(
         }))
       case 'camera-save':
         return await enqueueCamera(async () => {
+          if (recordingOwnsOutputs()) throw new Error('请先停止双路录像，再修改机位配置')
           validateObsCameraConfig(command.config)
           await camera?.stop()
           camera = null
@@ -188,13 +254,16 @@ export async function executeObsEffectCommand(
       case 'state':
         return { ok: true, settings: currentService.getSettings(), instantPresentation: structuredClone(getPresentationLedger().data) }
       case 'save':
-        await currentService.configure(command.settings)
-        getObsEffectLedger().change(data => Object.assign(data, currentService.getSettings()))
-        return {
-          ok: true,
-          settings: currentService.getSettings(),
-          message: 'OBS 特效规则已保存',
-        }
+        return await enqueueCamera(async () => {
+          if (recordingOwnsOutputs()) throw new Error('请先停止双路录像，再修改 OBS 连接配置')
+          await currentService.configure(command.settings)
+          getObsEffectLedger().change(data => Object.assign(data, currentService.getSettings()))
+          return {
+            ok: true as const,
+            settings: currentService.getSettings(),
+            message: 'OBS 特效规则已保存',
+          }
+        })
       case 'test':
         await currentService.test(command.settings)
         return { ok: true, message: 'OBS 连接及场景来源检查成功' }
