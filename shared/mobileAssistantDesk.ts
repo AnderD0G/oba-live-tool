@@ -22,7 +22,7 @@ export interface MobileAssistantCameraState {
   onProgram?: boolean
   message: string
 }
-export type MobileStudioMicCommand = { action: 'status' | 'toggle' | 'align-open' }
+export type MobileStudioMicCommand = { action: 'status' | 'toggle' | 'align-open' | 'mute' | 'unmute' }
 
 export interface MobileAssistantDeskSnapshot {
   accountId: string

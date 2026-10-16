@@ -278,7 +278,7 @@ export class MobileAssistantDeskServer {
   private async studioMicCommand(body: unknown): Promise<AssistantDeskResult> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return failure('MOBILE_INVALID_COMMAND', '麦克风操作参数无效')
     const input = body as Record<string, unknown>
-    if (Object.keys(input).length !== 1 || !['status', 'toggle', 'align-open'].includes(input.action as string)) return failure('MOBILE_INVALID_COMMAND', '麦克风操作参数无效')
+    if (Object.keys(input).length !== 1 || !['status', 'toggle', 'align-open', 'mute', 'unmute'].includes(input.action as string)) return failure('MOBILE_INVALID_COMMAND', '麦克风操作参数无效')
     if (!this.options.studioMic) return failure('STUDIO_MIC_HELPER_UNAVAILABLE', SAFE_MESSAGES.STUDIO_MIC_HELPER_UNAVAILABLE)
     const result = await this.options.studioMic(body as MobileStudioMicCommand)
     if (!result.ok) return publicFailure(result)

@@ -70,6 +70,14 @@ export class VoiceMicRouter {
     return { ok: true }
   }
   async manualToggle(): Promise<StudioMicHotkeyResult> {
+    return this.manualControl()
+  }
+  async manualSetMuted(muted: boolean): Promise<StudioMicHotkeyResult> {
+    if (typeof muted !== 'boolean' || !this.options.setMuted)
+      return { ok: false, error: { code: 'STUDIO_MIC_API_INVALID_COMMAND', message: '当前接口不支持指定闭麦状态' } }
+    return this.manualControl(muted)
+  }
+  private async manualControl(target?: boolean): Promise<StudioMicHotkeyResult> {
     if (this.busy || this.lease || this.routeState !== 'live')
       return {
         ok: false,
@@ -82,7 +90,7 @@ export class VoiceMicRouter {
       }
     this.busy = true
     try {
-      const result = await this.options.toggle()
+      const result = await (target === undefined ? this.options.toggle() : this.options.setMuted!(target))
       if (result.ok) {
         this.routeState =
           result.data.backend === 'api' && ['muted', 'unmuted'].includes(result.data.micState)

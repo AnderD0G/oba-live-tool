@@ -38,6 +38,7 @@ const facade = {
       const aligned = routing.alignOpen()
       if (!aligned.ok) return aligned
     } else if (action === 'toggle') result = await routing.manualToggle()
+    else if (action === 'mute' || action === 'unmute') result = await routing.manualSetMuted(action === 'mute')
     else if (action === 'request-access') {
       // Kept for older renderers: the API needs no keyboard permission prompt.
       result = await studioMicApi().execute({ action: 'status' })

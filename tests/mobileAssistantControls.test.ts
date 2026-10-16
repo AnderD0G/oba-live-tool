@@ -429,7 +429,7 @@ test('phone lens controls use the configured camera without exposing or acceptin
 
 test('phone projects the confirmed API microphone state without keyboard permission or sent claims', async t => {
   const f = await fixture(t, false, true)
-  for (const action of ['status', 'toggle', 'align-open']) {
+  for (const action of ['status', 'toggle', 'align-open', 'mute', 'unmute']) {
     const result = await f.request('api/studio-mic', { action })
     assert.equal(result.status, 200)
     assert.equal(result.body.data.backend, 'api')

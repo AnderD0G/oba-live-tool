@@ -16,6 +16,26 @@ const delivered = {
   },
 } as const
 
+test('manual mute is idempotent, locks during dictation and preserves manual silence afterwards', async () => {
+  let muted = false
+  const targets: boolean[] = []
+  const router = new VoiceMicRouter({ platform: 'darwin', toggle: async () => { throw Error('must not toggle') },
+    setMuted: async target => {
+      targets.push(target)
+      const beforeMuted = muted; muted = target
+      return { ok: true, data: { ...delivered.data, backend: 'api', hotkey: '', micState: target ? 'muted' : 'unmuted', beforeMuted } }
+    } })
+  assert.equal((await router.manualSetMuted(true)).ok, true)
+  assert.equal((await router.manualSetMuted(true)).ok, true)
+  assert.equal(await router.acquire(owner), undefined)
+  assert.equal((await router.manualSetMuted(false)).ok, false)
+  assert.equal(await router.release(owner), undefined)
+  assert.equal(muted, true)
+  assert.equal((await router.manualSetMuted(false)).ok, true)
+  assert.equal(muted, false)
+  assert.deepEqual(targets, [true, true, true, true, false])
+})
+
 test('Mac voice leases send one entry and one exit toggle, without replay on repeated release', async () => {
   let sent = 0
   const waits: number[] = []

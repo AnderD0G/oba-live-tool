@@ -219,7 +219,7 @@ export function createMobileClient(options = {}) {
       return mutate('./api/camera', command, 'control:camera', 20_000)
     },
     async studioMic(action) {
-      if (!['status', 'toggle', 'align-open'].includes(action)) return failure('UNSUPPORTED', '麦克风操作不可用')
+      if (!['status', 'toggle', 'align-open', 'mute', 'unmute'].includes(action)) return failure('UNSUPPORTED', '麦克风操作不可用')
       return mutate('./api/studio-mic', { action }, 'control:studio-mic', 12_000)
     },
     async xiaomi(command) {
@@ -362,11 +362,15 @@ export function mountMobileDesk() {
   const micLabel = element('p', 'control-label', '直播麦克风 · 豆包录音自动联动')
   const micNotice = element('p', 'control-note', '开始豆包录音前自动静音 TK Studio，结束或取消后恢复原状态。')
   const micActions = element('div', 'control-actions')
-  const micToggle = button('切换直播麦克风', 'secondary-button')
+  const micToggle = button('闭麦 TK', 'secondary-button')
   const micCheck = button('检查麦克风控制', 'text-button')
   const micAlign = button('重新读取麦克风状态', 'secondary-button')
   micAlign.hidden = true
-  micActions.append(micToggle, micCheck, micAlign)
+  micActions.append(micCheck, micAlign)
+  const manualMicBar = element('div', 'control-actions')
+  manualMicBar.setAttribute('aria-label', '手动直播闭麦')
+  manualMicBar.append(micToggle)
+  header.append(manualMicBar)
   const xiaomiLabel = element('p', 'control-label', '小米镜头')
   const xiaomiNotice = element('p', 'control-note', '请先在电脑上配置小米相机密钥')
   const xiaomiActions = element('div', 'control-actions')
@@ -591,7 +595,8 @@ export function mountMobileDesk() {
     iphoneCamera.setAttribute('aria-pressed', String(connected && cameraState?.selected === 'iphone'))
     androidCamera.setAttribute('aria-pressed', String(connected && cameraState?.selected === 'android'))
     const micBusy = client.isPending('control:studio-mic')
-    micToggle.disabled = !connected || micBusy || Boolean(voiceSession) || ['doubao', 'unknown'].includes(micState?.routeState)
+    micToggle.textContent = micState?.micState === 'muted' ? '恢复开麦' : '闭麦 TK'
+    micToggle.disabled = !connected || micBusy || Boolean(voiceSession) || micState?.routeState !== 'live' || !['muted', 'unmuted'].includes(micState?.micState)
     micCheck.disabled = !connected || micBusy
     micAlign.textContent = micState?.backend === 'api' ? '重新读取麦克风状态' : '我已恢复 TK 开麦，重新对齐'
     micAlign.hidden = micState?.routeState !== 'unknown'
@@ -606,7 +611,7 @@ export function mountMobileDesk() {
     previewButton.disabled = !connected && !previewEnabled
     previewButton.textContent = previewEnabled ? '关闭预览' : '开启预览'
     previewButton.setAttribute('aria-pressed', String(previewEnabled))
-    if (controls.open && connected && !controlsInitialized) {
+    if (connected && !controlsInitialized) {
       controlsInitialized = true
       queueMicrotask(() => { void runCamera({ action: 'status' }); void runMic('status') })
     }
@@ -766,7 +771,7 @@ export function mountMobileDesk() {
   iphoneCamera.addEventListener('click', () => void runCamera({ action: 'switch', target: 'iphone' }))
   androidCamera.addEventListener('click', () => void runCamera({ action: 'switch', target: 'android' }))
   cameraCheck.addEventListener('click', () => void runCamera({ action: 'status' }))
-  micToggle.addEventListener('click', () => void runMic('toggle'))
+  micToggle.addEventListener('click', () => void runMic(micState?.micState === 'muted' ? 'unmute' : 'mute'))
   micCheck.addEventListener('click', () => void runMic('status'))
   micAlign.addEventListener('click', () => void runMic('align-open'))
   xiaomiStart.addEventListener('click', () => void runXiaomi({ action: 'start' }))

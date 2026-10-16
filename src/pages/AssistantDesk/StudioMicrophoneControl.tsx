@@ -1,4 +1,4 @@
-import { LoaderCircle, Mic, RefreshCw } from 'lucide-react'
+import { LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { IPC_CHANNELS } from '../../../shared/ipcChannels'
 import type { StudioMicHotkeyCommand, StudioMicHotkeyState } from '../../../shared/studioMicHotkey'
@@ -60,6 +60,12 @@ export function StudioMicrophoneControl() {
     <section className="assistant-panel" aria-label="直播与豆包讲话切换">
       <div className="assistant-actions">
         <strong>讲话切换</strong>
+        <Button type="button" size="sm" variant={state?.micState === 'muted' ? 'outline' : 'default'}
+          disabled={pending || !state?.running || !state.accessGranted || state.routeState !== 'live' || state.micState === 'unknown'}
+          onClick={() => void run(state?.micState === 'muted' ? 'unmute' : 'mute')}>
+          {pending ? <LoaderCircle className="animate-spin" /> : state?.micState === 'muted' ? <Mic /> : <MicOff />}
+          {state?.micState === 'muted' ? '恢复开麦' : '闭麦 TK'}
+        </Button>
         {state && (
           <span role="status" className="assistant-muted">
             {state.routeState === 'unknown'
@@ -76,6 +82,7 @@ export function StudioMicrophoneControl() {
       </div>
       <p className="assistant-muted">
         点击回复框的“语音输入”，先闭麦 TK 再开始豆包识别；结束或取消后恢复录音前的麦克风状态。
+        手动闭麦后可照常交谈；再次点击“恢复开麦”才恢复直播收音。
       </p>
       {state?.routeState === 'unknown' && (
         <Button
@@ -95,17 +102,6 @@ export function StudioMicrophoneControl() {
           和本机控制服务须保持运行。
         </p>
         <div className="assistant-actions">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={
-              pending || !state?.running || !state.accessGranted || state.routeState === 'doubao'
-            }
-            onClick={() => void run('toggle')}
-          >
-            {pending ? <LoaderCircle className="animate-spin" /> : <Mic />}手动切换 TK 麦克风
-          </Button>
           <Button
             type="button"
             size="sm"

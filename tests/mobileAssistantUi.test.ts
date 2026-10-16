@@ -118,6 +118,7 @@ async function ui(t: any, data: any = snapshot, apiMic = false) {
     ({ value, apiMic }) => {
       let current = value
       let micRoute: 'live' | 'unknown' = 'live'
+      let apiMuted = true
       let focusResult = 'focused'
       let focusSubmitted = false
       let failFocus = false
@@ -216,18 +217,21 @@ async function ui(t: any, data: any = snapshot, apiMic = false) {
             onProgram: true,
             message: '机位已核对',
           })
-        if (url === './api/studio-mic')
+        if (url === './api/studio-mic') {
+          if (payload.action === 'mute') apiMuted = true
+          if (payload.action === 'unmute') apiMuted = false
           return ok({
             supported: true,
             running: true,
             accessGranted: true,
             hotkey: apiMic ? '' : 'Control+Option+M',
-            micState: apiMic ? 'muted' : 'unknown',
+            micState: apiMic ? apiMuted ? 'muted' : 'unmuted' : 'unknown',
             ...(apiMic ? { backend: 'api' } : {}),
             routeState: !apiMic && payload.action === 'toggle' ? 'unknown' : micRoute,
             linked: true,
-            message: apiMic ? 'TK Studio 麦克风已静音' : '已发送热键',
+            message: apiMic ? apiMuted ? 'TK Studio 麦克风已静音' : 'TK Studio 麦克风已开麦' : '已发送热键',
           })
+        }
         if (url === './api/xiaomi') {
           if (payload.action === 'preview') {
             previewActive++
@@ -401,8 +405,7 @@ browserTest(
     assert.equal(await camera.isEnabled(), true)
     await camera.click()
     await page.getByText('机位已核对', { exact: true }).waitFor()
-    await page.getByRole('button', { name: '切换直播麦克风', exact: true }).click()
-    await page.getByRole('button', { name: '我已恢复 TK 开麦，重新对齐', exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: '闭麦 TK', exact: true }).isDisabled(), true)
     assert.equal(await page.getByText('已闭麦', { exact: true }).count(), 0)
     assert.equal(
       await page.evaluate(
@@ -432,11 +435,17 @@ browserTest(
 
 browserTest('phone displays API mute state and keeps confirmed manual controls usable', async t => {
   const page = await ui(t, snapshot, true)
+  const restore = page.getByRole('button', { name: '恢复开麦', exact: true })
+  await restore.waitFor()
+  assert.equal(await restore.isVisible(), true)
+  await restore.click()
+  const mute = page.getByRole('button', { name: '闭麦 TK', exact: true })
+  assert.equal(await mute.isEnabled(), true)
+  await mute.click()
+  await restore.waitFor()
+  const writes = await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.url === './api/studio-mic' && ['mute', 'unmute', 'toggle'].includes(call.payload?.action)))
+  assert.deepEqual(writes.map((call: any) => call.payload.action), ['unmute', 'mute'])
   await page.getByText('机位与麦克风', { exact: true }).click()
-  await page.getByText('TK Studio 麦克风已静音', { exact: true }).waitFor()
-  const toggle = page.getByRole('button', { name: '切换直播麦克风', exact: true })
-  await toggle.click()
-  assert.equal(await toggle.isEnabled(), true)
   assert.equal(
     await page.getByRole('button', { name: '重新读取麦克风状态', exact: true }).isVisible(),
     false,

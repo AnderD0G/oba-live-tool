@@ -1,5 +1,5 @@
 export type StudioMicHotkeyCommand = {
-  action: 'status' | 'request-access' | 'toggle' | 'align-open'
+  action: 'status' | 'request-access' | 'toggle' | 'align-open' | 'mute' | 'unmute'
 }
 
 export interface StudioMicHotkeyState {
