@@ -145,17 +145,21 @@ export function createMobileClient(options = {}) {
   let polling = false
   let epoch = 0
   let accountId
+  let previewRequest
   const changed = () => options.onStatus?.({ connected, pending: new Set(pending), polling })
-  async function read(url, init, timeoutMs = 12_000) {
+  async function read(url, init, timeoutMs = 12_000, signal) {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    const abort = () => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) controller.abort()
     try {
       const response = await fetcher(url, { cache: 'no-store', ...init, signal: controller.signal })
       const result = await response.json()
       if (!response.ok && result?.ok !== false) return failure('HTTP_ERROR', `连接失败 (${response.status})`)
       if (!result || typeof result.ok !== 'boolean') throw Error('服务响应无效')
       return result
-    } finally { clearTimeout(timeout) }
+    } finally { clearTimeout(timeout); signal?.removeEventListener('abort', abort) }
   }
   async function mutate(url, body, key, timeoutMs = 12_000, keepalive = false) {
     if (!connected) return failure('OFFLINE', '连接中断，操作尚未提交')
@@ -166,7 +170,8 @@ export function createMobileClient(options = {}) {
       if (!result.ok) options.onError?.(result.error.message)
       return result
     } catch {
-      connected = false
+      // A lens operation can time out while preview and assistant snapshots remain available.
+      if (url !== './api/xiaomi') connected = false
       const result = failure('OFFLINE', '连接中断，操作结果未确认。恢复连接后请先核对状态。')
       options.onError?.(result.error.message)
       return result
@@ -225,6 +230,18 @@ export function createMobileClient(options = {}) {
           : command.action === 'focus' && Object.keys(command).length === 4 && number(command.x, 0, 1) && number(command.y, 0, 1) && typeof command.previewId === 'string' && /^[a-zA-Z0-9_-]{1,256}$/.test(command.previewId)
       if (!valid) return failure('UNSUPPORTED', '镜头操作不可用')
       return mutate('./api/xiaomi', command, 'control:xiaomi', ['start', 'stop'].includes(command.action) ? 190_000 : 35_000)
+    },
+    cancelXiaomiPreview() { previewRequest?.abort() },
+    async xiaomiPreview() {
+      if (!connected) return failure('OFFLINE', '预览连接尚未就绪')
+      if (previewRequest) return failure('PENDING', '上一帧尚未完成')
+      const controller = new AbortController()
+      previewRequest = controller
+      try {
+        const result = await read('./api/xiaomi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'preview' }) }, 35_000, controller.signal)
+        return controller.signal.aborted ? failure('PREVIEW_CANCELLED', '预览已关闭') : result
+      } catch { return failure(controller.signal.aborted ? 'PREVIEW_CANCELLED' : 'PREVIEW_UNAVAILABLE', '预览暂未就绪，正在等待新图像') }
+      finally { if (previewRequest === controller) previewRequest = undefined }
     },
     async voice(action, rowId, settings = {}) {
       if (!['start', 'stop', 'cancel'].includes(action) || typeof rowId !== 'string' || !rowId) return failure('UNSUPPORTED', '语音操作不可用')
@@ -297,8 +314,9 @@ export function mountMobileDesk() {
   let leaving = false
   let cameraState = null, micState = null, xiaomiState = null, xiaomiSettings = null, xiaomiPreview = null
   let controlsInitialized = false
-  let xiaomiFocus = null, focusTimer, focusVersion = 0
-  let zoomTimer, zoomRefreshTimer, queuedZoom = null, zoomSending = false, zoomRefreshing = false, zoomVersion = 0, lastXiaomiWriteAt = 0, xiaomiWriteBusy = false
+  let xiaomiFocus = null, focusVersion = 0
+  let zoomTimer, queuedZoom = null, zoomSending = false, lastXiaomiWriteAt = 0, xiaomiWriteBusy = false, xiaomiWriteAction = null
+  let previewEnabled = false, previewGeneration = 0, previewFrameVersion = 0, previewTimer, previewSettingsTimer, previewDecodeImage, previewZoomTarget = null
   const retryIds = new Map()
   const cards = { live: new Map(), tasks: new Map() }
   const follows = { live: createFollowState(), tasks: createFollowState() }
@@ -361,12 +379,12 @@ export function mountMobileDesk() {
   const zoomSlider = element('input', 'control-zoom-slider'); zoomSlider.type = 'range'; zoomSlider.min = '1'; zoomSlider.max = '10'; zoomSlider.step = '0.01'; zoomSlider.value = '1'; zoomSlider.setAttribute('aria-label', '小米无级变焦')
   zoomInput.step = '0.01'
   zoomField.append(zoomSlider, zoomInput, zoomApply)
-  const previewButton = button('刷新预览，点选对焦', 'secondary-button')
+  const previewButton = button('开启预览', 'secondary-button')
   const previewImage = element('img', 'xiaomi-preview'); previewImage.alt = '小米相机预览，点选对焦'; previewImage.hidden = true
   const previewFrame = element('div', 'xiaomi-preview-frame'); previewFrame.hidden = true
   const focusMarker = element('span', 'xiaomi-focus-marker'); focusMarker.hidden = true; focusMarker.setAttribute('aria-label', '对焦位置'); focusMarker.setAttribute('role', 'img')
   previewFrame.append(previewImage, focusMarker)
-  const previewNote = element('p', 'control-note', '刷新预览后 2 秒内可点选对焦；变焦后先刷新镜头设置。')
+  const previewNote = element('p', 'control-note', '预览默认关闭；开启后目标 30 帧/秒，实际速度取决于设备与网络。点图可对焦。')
   controlBody.append(cameraLabel, cameraActions, cameraNotice, micLabel, micActions, micNotice, xiaomiLabel, xiaomiActions, zoomField, previewButton, previewFrame, previewNote, xiaomiNotice)
   controls.append(controlBody)
 
@@ -581,11 +599,13 @@ export function mountMobileDesk() {
     const xiaomiBusy = xiaomiWriteBusy || client.isPending('control:xiaomi')
     for (const target of [xiaomiStart, xiaomiStop, xiaomiCheck]) target.disabled = !connected || xiaomiBusy
     xiaomiAuto.disabled = !connected || xiaomiBusy || !xiaomiSettings?.available || xiaomiSettings.focus_supported === false
-    const zoomBusy = zoomSending || zoomRefreshing || queuedZoom !== null
+    const zoomBusy = zoomSending || queuedZoom !== null || previewEnabled && !xiaomiWriteBusy
     zoomInput.disabled = !connected || !xiaomiSettings?.available || xiaomiBusy && !zoomBusy
     zoomSlider.disabled = zoomInput.disabled
     zoomApply.disabled = zoomInput.disabled
-    previewButton.disabled = !connected || xiaomiBusy || !xiaomiSettings?.available
+    previewButton.disabled = !connected && !previewEnabled
+    previewButton.textContent = previewEnabled ? '关闭预览' : '开启预览'
+    previewButton.setAttribute('aria-pressed', String(previewEnabled))
     if (controls.open && connected && !controlsInitialized) {
       controlsInitialized = true
       queueMicrotask(() => { void runCamera({ action: 'status' }); void runMic('status') })
@@ -616,48 +636,81 @@ export function mountMobileDesk() {
     return snapshot ? snapshot.serverNow + Math.max(0, Date.now() - receivedAt) : Date.now()
   }
   function clearXiaomiFocus() {
-    focusVersion++; clearTimeout(focusTimer); xiaomiFocus = null; focusMarker.hidden = true
+    focusVersion++; xiaomiFocus = null; focusMarker.hidden = true
   }
   function invalidateXiaomiPreview(hide = false, clearFocus = true) {
-    xiaomiPreview = null
+    previewFrameVersion++; xiaomiPreview = null
     if (clearFocus) clearXiaomiFocus()
     if (hide) { previewImage.hidden = true; previewFrame.hidden = true }
   }
   function cancelZoom() {
-    zoomVersion++; clearTimeout(zoomTimer); clearTimeout(zoomRefreshTimer); zoomTimer = undefined; queuedZoom = null; zoomRefreshing = false
+    clearTimeout(zoomTimer); zoomTimer = undefined; queuedZoom = null; previewZoomTarget = null
+  }
+  function stopPreview() {
+    previewEnabled = false; previewGeneration++
+    clearTimeout(previewTimer); clearTimeout(previewSettingsTimer)
+    client.cancelXiaomiPreview()
+    if (previewDecodeImage) { previewDecodeImage.src = ''; previewDecodeImage = null }
+    invalidateXiaomiPreview(true); previewImage.removeAttribute('src')
+    previewNote.textContent = '预览已关闭；相机采集不受影响。'
+    renderControls()
+  }
+  function previewCurrent(generation) {
+    return previewEnabled && generation === previewGeneration && !leaving && !document.hidden && controls.open && client.isConnected()
+  }
+  async function previewTick(generation) {
+    if (!previewCurrent(generation)) return
+    const started = performance.now(), frameVersion = previewFrameVersion
+    const selectableAtRequest = !xiaomiWriteBusy && !zoomSending && queuedZoom === null && previewZoomTarget === null
+    let nextDelay = 1000 / 30
+    try {
+      if (xiaomiWriteBusy && !['focus', 'zoom'].includes(xiaomiWriteAction)) return
+      const result = await client.xiaomiPreview()
+      if (!previewCurrent(generation)) return
+      if (!result.ok || !result.data?.preview) { nextDelay = 250; previewNote.textContent = result.error?.message || '正在等待新预览'; return }
+      const frame = result.data.preview
+      const decoded = new Image(); previewDecodeImage = decoded; decoded.src = frame.dataUrl
+      try { await decoded.decode() } finally { if (previewDecodeImage === decoded) previewDecodeImage = null }
+      if (!previewCurrent(generation)) return
+      if (frame.expiresAt <= cameraNow()) { xiaomiPreview = null; nextDelay = 100; previewNote.textContent = '图像过旧，正在等待新预览'; return }
+      xiaomiPreview = selectableAtRequest && frameVersion === previewFrameVersion && !xiaomiWriteBusy && !zoomSending && queuedZoom === null && previewZoomTarget === null ? frame : null
+      previewImage.src = frame.dataUrl; previewImage.hidden = false; previewFrame.hidden = false
+      previewNote.textContent = '预览已开启 · 目标 30 帧/秒，实际速度取决于设备与网络'
+    } catch { nextDelay = 250; if (previewCurrent(generation)) previewNote.textContent = '预览暂未就绪，正在等待新图像' }
+    finally {
+      if (previewCurrent(generation)) previewTimer = setTimeout(() => void previewTick(generation), Math.max(0, nextDelay - (performance.now() - started)))
+    }
+  }
+  async function previewSettingsTick(generation) {
+    if (!previewCurrent(generation)) return
+    try {
+      if (!xiaomiWriteBusy && !client.isPending('control:xiaomi')) await runXiaomi({ action: 'settings' }, () => previewCurrent(generation))
+    } finally { if (previewCurrent(generation)) previewSettingsTimer = setTimeout(() => void previewSettingsTick(generation), 500) }
+  }
+  function startPreview() {
+    if (previewEnabled || leaving || document.hidden || !client.isConnected()) return
+    previewEnabled = true; const generation = ++previewGeneration
+    previewNote.textContent = '正在开启预览 · 目标 30 帧/秒'
+    renderControls(); void previewSettingsTick(generation); void previewTick(generation)
   }
   function focusResult(settings) {
     if (!xiaomiFocus || !settings) return
     const result = settings.last_focus_result
     if (settings.focus_pending || result === 'pending' || settings.focus_state === 'focusing') {
-      focusMarker.dataset.state = 'pending'; xiaomiNotice.textContent = '对焦中，等待设备返回结果'; return
+      focusMarker.dataset.state = 'pending'; xiaomiNotice.textContent = xiaomiFocus.deadline <= Date.now() ? '对焦结果尚未确认，预览继续显示' : '对焦中，等待设备返回结果'; return
     }
-    const terminal = ['focused', 'not_focused', 'timeout', 'failed', 'cancelled'].includes(result)
-    if (!terminal) { xiaomiNotice.textContent = `对焦结果未确认${result ? ` · ${result}` : ''}${settings.focus_state ? ` · 状态 ${settings.focus_state}` : ''}`; return }
-    const wasDone = xiaomiFocus.done
-    clearTimeout(focusTimer); xiaomiFocus.done = true
+    if (!['focused', 'not_focused', 'timeout', 'failed', 'cancelled'].includes(result)) { xiaomiNotice.textContent = `对焦结果未确认${result ? ` · ${result}` : ''}${settings.focus_state ? ` · 状态 ${settings.focus_state}` : ''}`; return }
+    xiaomiFocus.done = true
     focusMarker.dataset.state = result === 'focused' ? 'focused' : result === 'cancelled' ? 'cancelled' : 'failed'
     xiaomiNotice.textContent = result === 'focused' ? '设备确认已合焦（focused）' : result === 'cancelled' ? '对焦已取消（cancelled）' : `对焦未合焦（${result}）`
-    const version = focusVersion
-    if (!wasDone && controls.open && client.isConnected()) void runXiaomi({ action: 'preview' }, () => version === focusVersion, true)
   }
-  function observeFocus(version, remaining = 6) {
-    clearTimeout(focusTimer)
-    focusTimer = setTimeout(async () => {
-      if (version !== focusVersion || !xiaomiFocus || xiaomiFocus.done || !controls.open || !client.isConnected()) return
-      if (xiaomiFocus.deadline <= Date.now() || remaining <= 0) { xiaomiNotice.textContent = '对焦结果尚未确认，可刷新镜头设置检查'; return }
-      if (!xiaomiWriteBusy && !client.isPending('control:xiaomi')) await runXiaomi({ action: 'settings' }, () => version === focusVersion)
-      if (version === focusVersion && xiaomiFocus && !xiaomiFocus.done) observeFocus(version, remaining - 1)
-    }, 800)
-  }
-  async function runXiaomi(command, current = () => !leaving, preserveFocus = false) {
+  async function runXiaomi(command, current = () => !leaving) {
     if (leaving || xiaomiWriteBusy || client.isPending('control:xiaomi') || !current()) return
     const write = ['zoom', 'start', 'stop', 'autofocus', 'focus'].includes(command.action)
     if (['start', 'stop', 'autofocus'].includes(command.action)) { cancelZoom(); invalidateXiaomiPreview(['start', 'stop'].includes(command.action)) }
-    else if (command.action === 'preview' && !preserveFocus) invalidateXiaomiPreview()
     else if (command.action === 'zoom') invalidateXiaomiPreview()
     let result
-    if (write) { xiaomiWriteBusy = true; renderControls() }
+    if (write) { xiaomiWriteBusy = true; xiaomiWriteAction = command.action; renderControls() }
     try {
       if (write) {
         const remaining = Math.max(0, 250 - (Date.now() - lastXiaomiWriteAt))
@@ -666,7 +719,10 @@ export function mountMobileDesk() {
         lastXiaomiWriteAt = Date.now()
       }
       result = await client.xiaomi(command)
-    } finally { if (write) xiaomiWriteBusy = false; renderControls() }
+    } finally {
+      if (write) { xiaomiWriteBusy = false; xiaomiWriteAction = null }
+      renderControls()
+    }
     if (leaving || !current()) return result
     if (!result.ok) { xiaomiNotice.textContent = result.error.message; if (['status', 'settings'].includes(command.action)) xiaomiSettings = null; if (command.action === 'focus') focusMarker.dataset.state = 'cancelled'; renderControls(); return result }
     if (result.data.camera) {
@@ -678,44 +734,30 @@ export function mountMobileDesk() {
       xiaomiSettings = result.data.settings
       zoomInput.min = zoomSlider.min = String(xiaomiSettings.zoom_min ?? 1); zoomInput.max = zoomSlider.max = String(xiaomiSettings.zoom_max ?? 10)
       if (typeof xiaomiSettings.observed_zoom === 'number' && queuedZoom === null && !zoomSending) zoomInput.value = zoomSlider.value = String(xiaomiSettings.observed_zoom)
+      if (previewZoomTarget !== null && typeof xiaomiSettings.observed_zoom === 'number' && Math.abs(xiaomiSettings.observed_zoom - previewZoomTarget) <= 0.05) previewZoomTarget = null
       if (typeof previousZoom === 'number' && typeof xiaomiSettings.observed_zoom === 'number' && Math.abs(previousZoom - xiaomiSettings.observed_zoom) > 0.0001) invalidateXiaomiPreview()
     }
-    if (result.data.preview) { xiaomiPreview = result.data.preview; previewImage.src = xiaomiPreview.dataUrl; previewImage.hidden = false; previewFrame.hidden = false }
     const states = { off: '小米相机已关闭', ready: '小米相机已就绪', capturing: '小米相机已连接视频消费者', offline: '小米手机离线', unknown: '相机状态未确认' }
-    if (!preserveFocus) xiaomiNotice.textContent = result.data.preview ? '预览已更新，可在图像内点选对焦' : result.data.operation ? result.data.operation.focus_submitted ? '对焦已提交，等待设备返回结果' : '镜头指令已提交，请刷新设置核对' : `${states[xiaomiState?.state] || '镜头设置已读取'}${typeof xiaomiSettings?.observed_zoom === 'number' ? ` · 实际倍率 ${xiaomiSettings.observed_zoom}×` : ''}`
-    if (command.action === 'focus' && result.data.operation?.focus_submitted) observeFocus(focusVersion)
+    xiaomiNotice.textContent = result.data.operation ? result.data.operation.focus_submitted ? '对焦已提交，等待设备返回结果' : '镜头指令已提交，请刷新设置核对' : `${states[xiaomiState?.state] || '镜头设置已读取'}${typeof xiaomiSettings?.observed_zoom === 'number' ? ` · 实际倍率 ${xiaomiSettings.observed_zoom}×` : ''}`
     if (result.data.settings && xiaomiFocus) focusResult(result.data.settings)
     renderControls()
     return result
-  }
-  async function refreshZoomPreview(version, target, remaining = 4) {
-    const current = () => !leaving && version === zoomVersion && queuedZoom === null && !zoomSending && controls.open && client.isConnected()
-    if (!current()) return
-    zoomRefreshing = true
-    try {
-      if (xiaomiWriteBusy || client.isPending('control:xiaomi')) { if (remaining > 1) zoomRefreshTimer = setTimeout(() => void refreshZoomPreview(version, target, remaining - 1), 400); return }
-      const settings = await runXiaomi({ action: 'settings' }, current)
-      if (!current() || !settings?.ok) return
-      const observed = settings.data.settings?.observed_zoom
-      if (typeof observed === 'number' && Math.abs(observed - target) <= 0.05) await runXiaomi({ action: 'preview' }, current)
-      else if (remaining > 1) zoomRefreshTimer = setTimeout(() => void refreshZoomPreview(version, target, remaining - 1), 400)
-    } finally { zoomRefreshing = false; renderControls() }
   }
   async function flushZoom() {
     clearTimeout(zoomTimer); zoomTimer = undefined
     if (leaving || queuedZoom === null || zoomSending || !client.isConnected()) return
     if (xiaomiWriteBusy || client.isPending('control:xiaomi')) { zoomTimer = setTimeout(() => void flushZoom(), 300); return }
-    const target = queuedZoom, hadPreview = !previewImage.hidden
+    const target = queuedZoom
     queuedZoom = null; zoomSending = true
     const result = await runXiaomi({ action: 'zoom', ratio: target })
+    if (!result?.ok && queuedZoom === null) previewZoomTarget = null
     zoomSending = false; renderControls()
     if (queuedZoom !== null) { if (queuedZoom === target && result?.ok) queuedZoom = null; else { zoomTimer = setTimeout(() => void flushZoom(), Math.max(0, 300 - (Date.now() - lastXiaomiWriteAt))); return } }
-    if (result?.ok && hadPreview) { const version = zoomVersion; zoomRefreshTimer = setTimeout(() => void refreshZoomPreview(version, target), 400) }
   }
   function queueZoom(value, final = false) {
     const ratio = Number(value), minimum = Number(zoomSlider.min), maximum = Number(zoomSlider.max)
     if (!Number.isFinite(ratio) || ratio < minimum || ratio > maximum || leaving || !client.isConnected()) return
-    zoomVersion++; clearTimeout(zoomRefreshTimer); queuedZoom = ratio
+    queuedZoom = ratio; previewZoomTarget = ratio
     zoomInput.value = zoomSlider.value = String(ratio)
     invalidateXiaomiPreview(); renderControls()
     if (final) void flushZoom()
@@ -735,15 +777,15 @@ export function mountMobileDesk() {
   zoomSlider.addEventListener('input', () => queueZoom(zoomSlider.value))
   zoomSlider.addEventListener('change', () => queueZoom(zoomSlider.value, true))
   zoomSlider.addEventListener('pointerup', () => { if (queuedZoom !== null) void flushZoom() })
-  previewButton.addEventListener('click', () => void runXiaomi({ action: 'preview' }))
+  previewButton.addEventListener('click', () => previewEnabled ? stopPreview() : startPreview())
   previewImage.addEventListener('click', event => {
-    if (xiaomiWriteBusy || client.isPending('control:xiaomi') || zoomSending || queuedZoom !== null) return
+    if (!previewEnabled || xiaomiWriteBusy || client.isPending('control:xiaomi') || zoomSending || queuedZoom !== null) return
     if (!xiaomiPreview || xiaomiPreview.expiresAt <= cameraNow()) { if (!xiaomiFocus || xiaomiFocus.done) clearXiaomiFocus(); xiaomiNotice.textContent = '预览已过期，请刷新图像后再点选对焦'; return }
     const rect = previewImage.getBoundingClientRect()
     if (!rect.width || !rect.height) return
     const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
     const preview = xiaomiPreview
-    clearXiaomiFocus(); xiaomiPreview = null
+    invalidateXiaomiPreview()
     xiaomiFocus = { x, y, deadline: Date.now() + 6000, width: previewImage.naturalWidth, height: previewImage.naturalHeight, done: false }
     focusMarker.style.left = `${x * 100}%`; focusMarker.style.top = `${y * 100}%`; focusMarker.dataset.state = 'pending'; focusMarker.hidden = false
     xiaomiNotice.textContent = '正在提交对焦位置'
@@ -752,7 +794,7 @@ export function mountMobileDesk() {
   })
   previewImage.addEventListener('load', () => { if (xiaomiFocus && (xiaomiFocus.width !== previewImage.naturalWidth || xiaomiFocus.height !== previewImage.naturalHeight)) clearXiaomiFocus() })
   previewImage.addEventListener('error', () => invalidateXiaomiPreview(true))
-  controls.addEventListener('toggle', () => { if (!controls.open) clearXiaomiFocus(); renderControls() })
+  controls.addEventListener('toggle', () => { if (!controls.open) stopPreview(); renderControls() })
   window.addEventListener('resize', () => { invalidateXiaomiPreview(); cancelZoom() })
 
 
@@ -1215,7 +1257,7 @@ export function mountMobileDesk() {
   }
   window.addEventListener('pagehide', () => {
     leaving = true
-    clearXiaomiFocus(); cancelZoom()
+    stopPreview(); cancelZoom()
     if (voiceSession) { voiceSession.cancelRequested = true; void cancelVoice() }
   })
   window.addEventListener('pageshow', () => { leaving = false })
@@ -1272,7 +1314,8 @@ export function mountMobileDesk() {
   retryButton.addEventListener('click', () => void refresh())
   document.addEventListener('visibilitychange', () => {
     for (const mode of ['live', 'tasks']) follows[mode].pointerEnd(performance.now())
-    if (!document.hidden) void refresh()
+    if (document.hidden) stopPreview()
+    else void refresh()
   })
   window.addEventListener('online', () => void refresh())
   window.addEventListener('offline', () => client.disconnect())

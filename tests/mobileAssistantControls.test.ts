@@ -202,6 +202,76 @@ test('mobile camera and Studio mic control remain available without starting cap
   assert.equal(f.commands.length, 0)
 })
 
+test('closing one phone preview aborts only its read and leaves another viewer active', async t => {
+  const entries: { signal?: AbortSignal; finish: () => void }[] = []
+  let entered!: () => void
+  let nextEntry = new Promise<void>(resolve => { entered = resolve })
+  const server = new MobileAssistantDeskServer({
+    accountId: 'default', accountName: 'fixture', host: '127.0.0.1', port: 0,
+    assetDirectory: path.resolve('public/assistant-mobile'),
+    execute: async () => ({ ok: true, data: state(false) }),
+    xiaomi: async (_command, signal?: AbortSignal) => {
+      await new Promise<void>(resolve => { entries.push({ signal, finish: resolve }); entered() })
+      return { ok: false, error: { code: 'XIAOMI_CANCELLED', message: 'cancelled' } }
+    },
+  })
+  const access = await server.start()
+  const clients: ReturnType<typeof httpRequest>[] = []
+  t.after(async () => {
+    for (const client of clients) client.destroy()
+    for (const entry of entries) entry.finish()
+    await server.stop()
+  })
+  const open = () => {
+    const client = httpRequest(new URL('api/xiaomi', access.urls[0]), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    }, response => response.resume())
+    client.on('error', () => {})
+    client.end(JSON.stringify({ action: 'preview' }))
+    clients.push(client)
+    return client
+  }
+  const first = open()
+  await nextEntry
+  nextEntry = new Promise<void>(resolve => { entered = resolve })
+  open()
+  await nextEntry
+  assert.ok(entries[0].signal, 'Preview must receive its request-owned cancellation signal')
+  assert.ok(entries[1].signal)
+  const aborted = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Phone preview was not aborted')), 1000)
+    entries[0].signal!.addEventListener('abort', () => { clearTimeout(timeout); resolve() }, { once: true })
+  })
+  first.destroy()
+  await aborted
+  assert.equal(entries[0].signal!.aborted, true)
+  assert.equal(entries[1].signal!.aborted, false)
+})
+
+test('continuous phone preview does not emit a diagnostic record for every frame', async t => {
+  const traces: { action: string }[] = []
+  const server = new MobileAssistantDeskServer({
+    accountId: 'default', accountName: 'fixture', host: '127.0.0.1', port: 0,
+    assetDirectory: path.resolve('public/assistant-mobile'),
+    execute: async () => ({ ok: true, data: state(false) }),
+    xiaomi: async () => ({ ok: true }),
+    trace: entry => { traces.push(entry) },
+  })
+  const access = await server.start()
+  t.after(() => server.stop())
+  const request = async (action: string) => {
+    const response = await fetch(new URL('api/xiaomi', access.urls[0]), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
+    })
+    assert.equal(response.status, 200)
+    await response.arrayBuffer()
+  }
+  for (let frame = 0; frame < 3; frame++) await request('preview')
+  assert.equal(traces.length, 0)
+  await request('settings')
+  assert.ok(traces.some(trace => trace.action === 'mobile.xiaomi'))
+})
+
 test('control routes reject extra actions, arbitrary targets and caller account overrides', async t => {
   const f = await fixture(t)
   for (const [route, payload] of [

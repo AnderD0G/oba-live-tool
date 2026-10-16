@@ -55,6 +55,13 @@ try {
   const zoomSlider = page.getByRole('slider', { name: '连续变焦倍率', exact: true })
   await zoomSlider.waitFor()
   assert.equal(await zoomSlider.getAttribute('step'), '0.01')
+  assert.equal((await invoke('xiaomi-camera:request', { action: 'preview-cancel' })).ok, true)
+  const openPreview = page.getByRole('button', { name: '打开操作预览', exact: true })
+  await openPreview.click()
+  await page.getByText(/小型竖屏预览，目标 30 帧\/秒/).waitFor()
+  await page.getByRole('button', { name: '关闭操作预览', exact: true }).click()
+  await openPreview.waitFor()
+  assert.equal(await page.getByRole('img', { name: '小米相机竖屏操作预览', exact: true }).count(), 0)
   const access = await invoke('assistant-mobile:request', { action: 'start', accountId: 'default' })
   assert.equal(access.ok, true)
   mobileStarted = true
@@ -70,7 +77,9 @@ try {
     return response.text()
   }
   assert.ok((await request('')).includes('app.js'))
-  assert.ok((await request('app.js')).includes('DeepSeek'))
+  const phoneScript = await request('app.js')
+  assert.ok(phoneScript.includes('DeepSeek'))
+  assert.ok(phoneScript.includes('目标 30 帧/秒') && phoneScript.includes('开启预览'))
   const phonePayloads = []
   for (const route of ['api/camera', 'api/studio-mic', 'api/xiaomi']) {
     const raw = await request(route, { action: 'status' })
@@ -87,7 +96,7 @@ try {
   const state = await invoke('assistant-desk:request', { action: 'state', params: { accountId: 'default' } })
   assert.equal(state.ok, true)
   assert.equal(state.data.activeSession, undefined)
-  console.log(JSON.stringify({ ok: true, packaged: true, version: info.version, desktopIpc: ['obs-camera', 'xiaomi-camera', 'studio-mic-api'], xiaomiState: xiaomiStatus.camera.state, authenticatedPhoneRoutes: true, phoneAssets: true, phoneSecretsExcluded: true, nativePermissionPromptRemoved: true, fractionalZoomSlider: true, writesToLiveServices: false, captureStarted: false }))
+  console.log(JSON.stringify({ ok: true, packaged: true, version: info.version, desktopIpc: ['obs-camera', 'xiaomi-camera', 'studio-mic-api'], xiaomiState: xiaomiStatus.camera.state, authenticatedPhoneRoutes: true, phoneAssets: true, phoneSecretsExcluded: true, nativePermissionPromptRemoved: true, fractionalZoomSlider: true, onDemand30FpsPreviewControls: true, previewCancelIpc: true, writesToLiveServices: false, captureStarted: false }))
 } finally {
   if (mobileStarted && page) await page.evaluate(() => window.ipcRenderer.invoke('assistant-mobile:request', { action: 'stop', accountId: 'default' })).catch(() => {})
   if (application) await application.close()

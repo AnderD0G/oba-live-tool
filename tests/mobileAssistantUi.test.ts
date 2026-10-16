@@ -120,15 +120,50 @@ async function ui(t: any, data: any = snapshot, apiMic = false) {
       let micRoute: 'live' | 'unknown' = 'live'
       let focusResult = 'focused'
       let focusSubmitted = false
+      let failFocus = false
+      let holdFocus = false
+      let finishFocus: (() => void) | undefined
       let previewExpired = false
       let previewSequence = 0
       let observedZoom = 1
+      let holdPreview = false
+      let finishPreview: (() => void) | undefined
+      let holdDecode = false
+      let finishDecode: (() => void) | undefined
+      let previewActive = 0
       let holdZoom = false
       let finishZoom: (() => void) | undefined
       const calls: any[] = []
       let finish: any
       ;(window as any).fixture = {
         calls,
+        holdFocus() {
+          holdFocus = true
+        },
+        finishFocus() {
+          holdFocus = false
+          finishFocus?.()
+        },
+        failFocus() {
+          failFocus = true
+        },
+        previewMaximum: 0,
+        previewAborted: 0,
+        decodeWaiting: false,
+        holdPreview() {
+          holdPreview = true
+        },
+        finishPreview() {
+          holdPreview = false
+          finishPreview?.()
+        },
+        holdDecode() {
+          holdDecode = true
+        },
+        finishDecode() {
+          holdDecode = false
+          finishDecode?.()
+        },
         observedZoom(value: number) {
           observedZoom = value
         },
@@ -154,6 +189,16 @@ async function ui(t: any, data: any = snapshot, apiMic = false) {
         finish(data: any) {
           finish({ ok: true, json: async () => ({ ok: true, data }) })
         },
+      }
+      const originalDecode = HTMLImageElement.prototype.decode
+      HTMLImageElement.prototype.decode = async function () {
+        await originalDecode.call(this)
+        if (holdDecode) {
+          ;(window as any).fixture.decodeWaiting = true
+          await new Promise<void>(resolve => {
+            finishDecode = resolve
+          })
+        }
       }
       window.fetch = (async (url: any, init: any = {}) => {
         const payload = init.body ? JSON.parse(init.body) : undefined
@@ -185,10 +230,18 @@ async function ui(t: any, data: any = snapshot, apiMic = false) {
           })
         if (url === './api/xiaomi') {
           if (payload.action === 'preview') {
+            previewActive++
+            ;(window as any).fixture.previewMaximum = Math.max(
+              (window as any).fixture.previewMaximum,
+              previewActive,
+            )
+            init.signal?.addEventListener('abort', () => {
+              ;(window as any).fixture.previewAborted++
+            })
             const canvas = document.createElement('canvas')
             canvas.width = 360
             canvas.height = 640
-            return ok({
+            const result = ok({
               preview: {
                 id: `preview-${++previewSequence}`,
                 dataUrl: canvas.toDataURL('image/jpeg'),
@@ -196,6 +249,15 @@ async function ui(t: any, data: any = snapshot, apiMic = false) {
                 expiresAt: Date.now() + (previewExpired ? -1 : 2000),
               },
             })
+            if (holdPreview)
+              return new Promise(resolve => {
+                finishPreview = () => {
+                  previewActive--
+                  resolve(result)
+                }
+              })
+            previewActive--
+            return result
           }
           if (payload.action === 'zoom') {
             if (holdZoom)
@@ -209,8 +271,17 @@ async function ui(t: any, data: any = snapshot, apiMic = false) {
             return ok({ operation: { success: true, applied: true } })
           }
           if (payload.action === 'focus') {
+            if (failFocus) {
+              failFocus = false
+              throw new DOMException('unknown write outcome', 'TimeoutError')
+            }
             focusSubmitted = true
             focusResult = 'pending'
+            if (holdFocus)
+              return new Promise(resolve => {
+                finishFocus = () =>
+                  resolve(ok({ operation: { success: true, focus_submitted: true } }))
+              })
             return ok({ operation: { success: true, focus_submitted: true } })
           }
           return ok({
@@ -383,7 +454,7 @@ browserTest(
     const page = await ui(t, snapshot, true)
     await page.getByText('机位与麦克风', { exact: true }).click()
     await page.getByRole('button', { name: '刷新镜头设置', exact: true }).click()
-    await page.getByRole('button', { name: '刷新预览，点选对焦', exact: true }).click()
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
     const image = page.getByAltText('小米相机预览，点选对焦')
     await image.waitFor()
     await image.scrollIntoViewIfNeeded()
@@ -400,8 +471,12 @@ browserTest(
       node.scrollTop = Math.max(0, node.scrollTop - 45)
     })
     await page.screenshot({ path: '.cache/native/mobile-camera-focus-yellow.png', fullPage: true })
-    await image.click({ position: { x: 20, y: 20 } })
-    assert.equal(await marker.isVisible(), true)
+    const beforeFocusFrames = await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length,
+    )
     await page.getByText(/对焦中/).waitFor()
     await page.evaluate(() => {
       setTimeout(() => (window as any).fixture.focusResult('not_focused'), 1550)
@@ -424,8 +499,16 @@ browserTest(
     assert.equal(focusCalls.length, 1)
     assert.ok(Math.abs(focusCalls[0].payload.x - 0.25) < 0.01)
     assert.ok(Math.abs(focusCalls[0].payload.y - 0.6) < 0.01)
-    await page.getByRole('button', { name: '刷新预览，点选对焦', exact: true }).click()
+    const afterFocusFrames = await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length,
+    )
+    assert.ok(afterFocusFrames > beforeFocusFrames)
+    await page.getByRole('button', { name: '关闭预览', exact: true }).click()
     assert.equal(await marker.isVisible(), false)
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
     await image.click({ position: { x: 20, y: 20 } })
     await marker.waitFor()
     await page.getByRole('button', { name: '应用变焦', exact: true }).click()
@@ -440,7 +523,7 @@ browserTest(
     const page = await ui(t)
     await page.getByText('机位与麦克风', { exact: true }).click()
     await page.getByRole('button', { name: '刷新镜头设置', exact: true }).click()
-    const refreshPreview = page.getByRole('button', { name: '刷新预览，点选对焦', exact: true })
+    const refreshPreview = page.getByRole('button', { name: '开启预览', exact: true })
     await refreshPreview.click()
     const image = page.getByAltText('小米相机预览，点选对焦')
     await image.click({ position: { x: 30, y: 30 } })
@@ -451,8 +534,8 @@ browserTest(
     assert.equal(await marker.isVisible(), false)
     await page.evaluate(() => (window as any).fixture.expirePreview())
     await refreshPreview.click()
-    await image.click({ position: { x: 30, y: 30 } })
-    await page.getByText('预览已过期，请刷新图像后再点选对焦', { exact: true }).waitFor()
+    await page.getByText('图像过旧，正在等待新预览', { exact: true }).waitFor()
+    assert.equal(await image.isVisible(), false)
     assert.equal(await marker.isVisible(), false)
     assert.equal(
       await page.evaluate(
@@ -472,7 +555,7 @@ browserTest(
     const page = await ui(t)
     await page.getByText('机位与麦克风', { exact: true }).click()
     await page.getByRole('button', { name: '刷新镜头设置', exact: true }).click()
-    await page.getByRole('button', { name: '刷新预览，点选对焦', exact: true }).click()
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
     const image = page.getByAltText('小米相机预览，点选对焦')
     const slider = page.getByRole('slider', { name: '小米无级变焦', exact: true })
     await slider.waitFor()
@@ -508,12 +591,41 @@ browserTest(
       ),
       1,
     )
+    const heldFrames = await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length,
+    )
+    await page.waitForFunction(
+      previous =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length >=
+        previous + 3,
+      heldFrames,
+    )
+    await image.click({ position: { x: 30, y: 30 } })
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.url === './api/xiaomi' && call.payload.action === 'focus',
+          ).length,
+      ),
+      0,
+    )
     await page.evaluate(() => (window as any).fixture.finishZoom())
     await page.waitForFunction(
       () =>
         (window as any).fixture.calls.filter(
-          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
-        ).length >= 2,
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'zoom',
+        ).length === 2,
+    )
+    await page.waitForFunction(
+      () =>
+        (document.querySelector('[aria-label="小米变焦倍率"]') as HTMLInputElement).value ===
+        '2.37',
     )
     const zooms = await page.evaluate(() =>
       (window as any).fixture.calls.filter(
@@ -542,7 +654,7 @@ browserTest('phone lens writes lock other actions during the rate-limit wait', a
   const page = await ui(t)
   await page.getByText('机位与麦克风', { exact: true }).click()
   await page.getByRole('button', { name: '刷新镜头设置', exact: true }).click()
-  await page.getByRole('button', { name: '刷新预览，点选对焦', exact: true }).click()
+  await page.getByRole('button', { name: '开启预览', exact: true }).click()
   await page.getByAltText('小米相机预览，点选对焦').click({ position: { x: 30, y: 30 } })
   await page.getByText(/对焦已提交.*等待/).waitFor()
   const blocked = await page.evaluate(() => {
@@ -583,7 +695,7 @@ browserTest(
     const page = await ui(t)
     await page.getByText('机位与麦克风', { exact: true }).click()
     await page.getByRole('button', { name: '刷新镜头设置', exact: true }).click()
-    await page.getByRole('button', { name: '刷新预览，点选对焦', exact: true }).click()
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
     const image = page.getByAltText('小米相机预览，点选对焦')
     await image.click({ position: { x: 30, y: 30 } })
     await page.getByText(/对焦已提交.*等待/).waitFor()
@@ -592,16 +704,8 @@ browserTest(
     await page.evaluate(() => (window as any).fixture.observedZoom(2.75))
     await page.getByRole('button', { name: '刷新镜头设置', exact: true }).click()
     await marker.waitFor({ state: 'hidden' })
-    const reads = () =>
-      page.evaluate(
-        () =>
-          (window as any).fixture.calls.filter(
-            (call: any) => call.url === './api/xiaomi' && call.payload.action === 'settings',
-          ).length,
-      )
-    const observedReads = await reads()
     await page.waitForTimeout(900)
-    assert.equal(await reads(), observedReads)
+    assert.equal(await marker.isVisible(), false)
     assert.equal(await image.isVisible(), true)
     assert.equal(
       await page.evaluate(
@@ -611,6 +715,229 @@ browserTest(
           ).length,
       ),
       1,
+    )
+  },
+)
+
+browserTest(
+  'phone preview defaults off and waits for decode before requesting another frame',
+  async t => {
+    const page = await ui(t)
+    await page.getByText('机位与麦克风', { exact: true }).click()
+    const frames = () =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+          ).length,
+      )
+    assert.equal(await frames(), 0)
+    await page.evaluate(() => (window as any).fixture.holdDecode())
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.decodeWaiting)
+    await page.waitForTimeout(120)
+    assert.equal(await frames(), 1)
+    await page.evaluate(() => (window as any).fixture.finishDecode())
+    await page.waitForFunction(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length >= 5,
+    )
+    await page.getByRole('button', { name: '关闭预览', exact: true }).click()
+    const count = await frames()
+    await page.waitForTimeout(120)
+    assert.equal(await frames(), count)
+    assert.equal(await page.getByAltText('小米相机预览，点选对焦').isVisible(), false)
+    assert.equal(await page.evaluate(() => (window as any).fixture.previewMaximum), 1)
+    assert.ok(
+      (await page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.url === './api/xiaomi' && call.payload.action === 'settings',
+          ).length,
+      )) <= 2,
+    )
+    assert.equal(
+      await page.evaluate(() =>
+        (window as any).fixture.calls.some(
+          (call: any) =>
+            call.url === './api/xiaomi' && ['start', 'stop'].includes(call.payload.action),
+        ),
+      ),
+      false,
+    )
+  },
+)
+
+browserTest(
+  'phone closing preview aborts only its image request and cannot redisplay a late frame',
+  async t => {
+    const page = await ui(t)
+    await page.getByText('机位与麦克风', { exact: true }).click()
+    await page.evaluate(() => (window as any).fixture.holdPreview())
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
+    await page.waitForFunction(() =>
+      (window as any).fixture.calls.some(
+        (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+      ),
+    )
+    await page.getByRole('button', { name: '关闭预览', exact: true }).click()
+    assert.equal(await page.evaluate(() => (window as any).fixture.previewAborted), 1)
+    await page.evaluate(() => (window as any).fixture.finishPreview())
+    await page.waitForTimeout(100)
+    assert.equal(await page.getByAltText('小米相机预览，点选对焦').isVisible(), false)
+    assert.equal(
+      await page.getByRole('button', { name: '开启预览', exact: true }).isVisible(),
+      true,
+    )
+    await page.evaluate(() => (window as any).fixture.holdPreview())
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
+    await page.waitForFunction(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length === 2,
+    )
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    assert.equal(await page.evaluate(() => (window as any).fixture.previewAborted), 2)
+    await page.evaluate(() => (window as any).fixture.finishPreview())
+    await page.waitForTimeout(100)
+    assert.equal(await page.getByAltText('小米相机预览，点选对焦').isVisible(), false)
+    assert.equal(
+      await page.getByRole('button', { name: '开启预览', exact: true }).isVisible(),
+      true,
+    )
+    assert.equal(
+      await page.evaluate(() =>
+        (window as any).fixture.calls.some(
+          (call: any) =>
+            call.url === './api/xiaomi' && ['start', 'stop'].includes(call.payload.action),
+        ),
+      ),
+      false,
+    )
+  },
+)
+
+browserTest(
+  'phone focus transport failure keeps the preview running without replaying the focus command',
+  async t => {
+    const page = await ui(t)
+    await page.getByText('机位与麦克风', { exact: true }).click()
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
+    const image = page.getByAltText('小米相机预览，点选对焦')
+    await image.waitFor()
+    await page.evaluate(() => (window as any).fixture.failFocus())
+    await image.click({ position: { x: 30, y: 30 } })
+    await page
+      .getByText(/连接中断，操作结果未确认/)
+      .first()
+      .waitFor()
+    const frames = await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length,
+    )
+    await page.waitForFunction(
+      previous =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length >=
+        previous + 3,
+      frames,
+    )
+    assert.equal(
+      await page.getByRole('button', { name: '关闭预览', exact: true }).isVisible(),
+      true,
+    )
+    assert.equal(await image.isVisible(), true)
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.url === './api/xiaomi' && call.payload.action === 'focus',
+          ).length,
+      ),
+      1,
+    )
+  },
+)
+
+test('cancelling a phone preview leaves the shared lens write and snapshot connection intact', async () => {
+  const signals: Record<string, AbortSignal> = {}
+  const finishes: Record<string, (value: ReturnType<typeof response>) => void> = {}
+  const client = createMobileClient({
+    fetch: async (url: string, init: RequestInit = {}) => {
+      if (url === './api/state') return response(snapshot)
+      const action = JSON.parse(String(init.body)).action
+      signals[action] = init.signal as AbortSignal
+      return new Promise(resolve => {
+        finishes[action] = resolve
+      })
+    },
+  })
+  await client.poll()
+  const preview = client.xiaomiPreview()
+  const write = client.xiaomi({ action: 'zoom', ratio: 1.25 })
+  client.cancelXiaomiPreview()
+  assert.equal(signals.preview.aborted, true)
+  assert.equal(signals.zoom.aborted, false)
+  finishes.preview(response({ preview: { id: 'late' } }))
+  finishes.zoom(response({ operation: { success: true, applied: true } }))
+  assert.equal((await preview).ok, false)
+  assert.equal((await write).ok, true)
+  assert.equal(client.isConnected(), true)
+})
+
+browserTest(
+  'phone preview keeps fetching during an in-flight focus and cannot submit another focus',
+  async t => {
+    const page = await ui(t)
+    await page.getByText('机位与麦克风', { exact: true }).click()
+    await page.getByRole('button', { name: '开启预览', exact: true }).click()
+    const image = page.getByAltText('小米相机预览，点选对焦')
+    await image.waitFor()
+    await page.evaluate(() => (window as any).fixture.holdFocus())
+    await image.click({ position: { x: 30, y: 30 } })
+    await page.waitForFunction(() =>
+      (window as any).fixture.calls.some(
+        (call: any) => call.url === './api/xiaomi' && call.payload.action === 'focus',
+      ),
+    )
+    const frames = await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length,
+    )
+    await page.waitForFunction(
+      previous =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.url === './api/xiaomi' && call.payload.action === 'preview',
+        ).length >=
+        previous + 3,
+      frames,
+    )
+    await image.click({ position: { x: 80, y: 80 } })
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.url === './api/xiaomi' && call.payload.action === 'focus',
+          ).length,
+      ),
+      1,
+    )
+    await page.evaluate(() => (window as any).fixture.finishFocus())
+    await page.getByText(/对焦已提交.*等待/).waitFor()
+    assert.equal(
+      await page.getByRole('button', { name: '关闭预览', exact: true }).isVisible(),
+      true,
     )
   },
 )

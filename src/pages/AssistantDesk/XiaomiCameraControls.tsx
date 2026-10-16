@@ -68,6 +68,9 @@ export function XiaomiCameraControls() {
   const [previewEnabled, setPreviewEnabled] = useState(false)
   const [preview, setPreview] = useState<XiaomiCameraPreview>()
   const [previewUsable, setPreviewUsable] = useState(false)
+  const [previewPaused, setPreviewPaused] = useState(false)
+  const [previewFps, setPreviewFps] = useState(0)
+  const [previewMessage, setPreviewMessage] = useState('')
   const [focusPoint, setFocusPoint] = useState<FocusPoint>()
   const [clock, setClock] = useState(Date.now())
   const alive = useRef(false)
@@ -83,6 +86,8 @@ export function XiaomiCameraControls() {
   const serial = useRef(0)
   const zoomDirty = useRef(false)
   const previewReading = useRef(false)
+  const previewSettingsReading = useRef(false)
+  const previewView = useRef(0)
   const stateReading = useRef(false)
   const stateRefreshQueued = useRef(false)
   const image = useRef<HTMLImageElement>(null)
@@ -107,6 +112,7 @@ export function XiaomiCameraControls() {
             observedZoom.current !== undefined &&
             Math.abs(observed - observedZoom.current) > 0.0001
           ) {
+            previewView.current++
             updateFocus(undefined)
             setPreviewUsable(false)
           }
@@ -316,53 +322,138 @@ export function XiaomiCameraControls() {
 
   useEffect(() => {
     if (!previewEnabled || !hasToken) return
-    let stopped = false
-    const update = async () => {
-      if (
-        previewReading.current ||
-        (busyRef.current && !['zoom', 'focus'].includes(busyAction.current)) ||
-        document.visibilityState !== 'visible'
-      )
+    let active = false
+    let epoch = 0
+    let frameTimer: ReturnType<typeof setTimeout> | undefined
+    let settingsTimer: ReturnType<typeof setTimeout> | undefined
+    let decoder: HTMLImageElement | undefined
+    let frames = 0
+    let fpsStartedAt = performance.now()
+    const current = (run: number) => active && run === epoch && alive.current
+    const writeBlocksPreview = () =>
+      busyRef.current && !['zoom', 'focus'].includes(busyAction.current)
+    const updateFrame = async (run: number) => {
+      if (!current(run)) return
+      const startedAt = performance.now()
+      let retryMs = 1000 / 30
+      if (previewReading.current || writeBlocksPreview()) {
+        frameTimer = setTimeout(() => void updateFrame(run), retryMs)
         return
+      }
       previewReading.current = true
       const generation = serial.current
+      const view = previewView.current
       const writingAtStart = busyRef.current || zoomPendingRef.current
       try {
-        const controls = await request({ action: 'settings' })
-        if (stopped || !alive.current || generation !== serial.current) return
-        apply(controls, false)
-        if (!controls.ok || !controls.settings?.available) {
-          setPreviewUsable(false)
-          return
-        }
         const result = await request({ action: 'preview' })
-        if (stopped || !alive.current || generation !== serial.current) return
+        if (!current(run) || generation !== serial.current || view !== previewView.current) return
         if (result.ok && result.preview) {
+          // Decode this JPEG before asking for another frame. No request or
+          // image decoding queue may build up behind a slow renderer.
+          const nextImage = new Image()
+          decoder = nextImage
+          nextImage.src = result.preview.dataUrl
+          await nextImage.decode()
+          if (decoder === nextImage) decoder = undefined
+          if (!current(run) || generation !== serial.current || view !== previewView.current) return
           setPreview(result.preview)
           setPreviewUsable(!writingAtStart && !busyRef.current && !zoomPendingRef.current)
-        } else setPreviewUsable(false)
-        setClock(Date.now())
-        if (!result.ok) setMessage(result.error?.message || '正在等待新鲜操作预览')
-      } catch {
-        if (!stopped && alive.current) {
+          setPreviewMessage('')
+          frames++
+        } else {
           setPreviewUsable(false)
-          setMessage('操作预览暂不可用，请刷新相机状态')
+          setPreviewMessage(result.error?.message || '正在等待新鲜操作预览')
+          retryMs = 250
         }
+      } catch {
+        if (current(run)) {
+          setPreviewUsable(false)
+          setPreviewMessage('操作预览暂不可用，请刷新相机状态')
+        }
+        retryMs = 250
       } finally {
         previewReading.current = false
+        if (current(run))
+          frameTimer = setTimeout(
+            () => void updateFrame(run),
+            Math.max(0, retryMs - (performance.now() - startedAt)),
+          )
       }
     }
-    void update()
-    const timer = setInterval(() => {
-      void update()
-    }, 1000)
-    const clockTimer = setInterval(() => setClock(Date.now()), 250)
+    const updateSettings = async (run: number) => {
+      if (!current(run)) return
+      const startedAt = performance.now()
+      if (!previewSettingsReading.current && !writeBlocksPreview()) {
+        previewSettingsReading.current = true
+        const generation = serial.current
+        try {
+          const controls = await request({ action: 'settings' })
+          if (current(run) && generation === serial.current) {
+            apply(controls, false, true)
+            if (!controls.ok || !controls.settings?.available) setPreviewUsable(false)
+          }
+        } catch {
+          if (current(run)) setPreviewUsable(false)
+        } finally {
+          previewSettingsReading.current = false
+        }
+      }
+      if (current(run))
+        settingsTimer = setTimeout(
+          () => void updateSettings(run),
+          Math.max(0, 500 - (performance.now() - startedAt)),
+        )
+    }
+    const pause = () => {
+      const wasActive = active
+      active = false
+      epoch++
+      clearTimeout(frameTimer)
+      clearTimeout(settingsTimer)
+      if (decoder) {
+        decoder.src = ''
+        decoder = undefined
+      }
+      setPreview(undefined)
+      setPreviewUsable(false)
+      setPreviewFps(0)
+      setPreviewMessage('')
+      updateFocus(undefined)
+      if (wasActive) void request({ action: 'preview-cancel' }).catch(() => {})
+    }
+    const visibilityChanged = () => {
+      const hidden = document.visibilityState !== 'visible'
+      setPreviewPaused(hidden)
+      if (hidden) {
+        pause()
+        return
+      }
+      if (active) return
+      active = true
+      const run = ++epoch
+      frames = 0
+      fpsStartedAt = performance.now()
+      void updateFrame(run)
+      void updateSettings(run)
+    }
+    document.addEventListener('visibilitychange', visibilityChanged)
+    visibilityChanged()
+    const clockTimer = setInterval(() => {
+      if (!active) return
+      setClock(Date.now())
+      const elapsed = performance.now() - fpsStartedAt
+      if (elapsed >= 1000) {
+        setPreviewFps((frames * 1000) / elapsed)
+        frames = 0
+        fpsStartedAt = performance.now()
+      }
+    }, 250)
     return () => {
-      stopped = true
-      clearInterval(timer)
+      document.removeEventListener('visibilitychange', visibilityChanged)
+      pause()
       clearInterval(clockTimer)
     }
-  }, [previewEnabled, hasToken, apply])
+  }, [previewEnabled, hasToken, apply, updateFocus])
 
   const fresh = previewUsable && !!preview && clock < preview.expiresAt
   const deviceBusy = !!busy || zoomPending
@@ -509,7 +600,10 @@ export function XiaomiCameraControls() {
           {previewEnabled ? '关闭操作预览' : '打开操作预览'}
         </Button>
         {previewEnabled && (
-          <span className="assistant-muted">小型竖屏预览，每秒更新；点击新鲜图像选点对焦。</span>
+          <span className="assistant-muted">
+            小型竖屏预览，目标 30 帧/秒；实际 {previewFps.toFixed(1)} 帧/秒
+            {previewPaused ? '（页面隐藏，已暂停）' : '；点击新鲜图像选点对焦。'}
+          </span>
         )}
       </div>
       {previewEnabled && (
@@ -600,6 +694,11 @@ export function XiaomiCameraControls() {
       {message && (
         <p role="status" className="assistant-muted">
           {message}
+        </p>
+      )}
+      {previewEnabled && previewMessage && (
+        <p role="status" className="assistant-muted">
+          {previewMessage}
         </p>
       )}
       {error && (

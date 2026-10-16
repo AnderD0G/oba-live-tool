@@ -9,14 +9,27 @@ import { chromium } from 'playwright'
 type FixtureWindow = Window & {
   fixture: {
     calls: string[]
-    counts: { status: number; settings: number }
+    counts: {
+      status: number
+      settings: number
+      preview: number
+      previewActive: number
+      previewMax: number
+      decodeWaiting: number
+    }
     holdLatest: boolean
     releaseInitial(): void
     releaseLatest(): void
     pausePreview: boolean
+    holdPreview: boolean
+    holdDecode: boolean
+    releasePreview(): void
+    releaseDecode(): void
+    setVisibility(hidden: boolean): void
+    unmount(): void
     focusCommands: Array<{ x: number; y: number; previewId: string; at: number }>
     zoomCommands: Array<{ ratio: number; at: number }>
-    resolveFocus(): void
+    resolveFocus(ok?: boolean): void
     resolveNextZoom(): void
     setFocusOutcome(result: string): void
     advanceClock(ms: number): void
@@ -45,7 +58,7 @@ function fixtureBundle() {
         import { createRoot } from 'react-dom/client';
         import { XiaomiCameraControls } from './src/pages/AssistantDesk/XiaomiCameraControls';
         const calls = [];
-        const counts = { status: 0, settings: 0 };
+        const counts = { status: 0, settings: 0, preview: 0, previewActive: 0, previewMax: 0, decodeWaiting: 0 };
         const initial = [];
         const latest = [];
         const lensMode = window.xiaomiFixtureMode === 'lens';
@@ -54,18 +67,25 @@ function fixtureBundle() {
         let finishFocus;
         const zoomWaiters = [];
         const focusCommands = [], zoomCommands = [];
+        const previewWaiters = [], decodeWaiters = [];
+        let root;
         const realNow = Date.now; let clockOffset = 0;
         Date.now = () => realNow() + clockOffset;
         const timestamp = '2026-10-16T06:30:00Z';
         window.fixture = {
-          calls, counts, holdLatest: false, pausePreview: false, focusCommands, zoomCommands,
+          calls, counts, holdLatest: false, pausePreview: false, holdPreview: false, holdDecode: false, focusCommands, zoomCommands,
+          releasePreview() { window.fixture.holdPreview = false; for (const resolve of previewWaiters.splice(0)) resolve(); },
+          releaseDecode() { window.fixture.holdDecode = false; for (const resolve of decodeWaiters.splice(0)) resolve(); counts.decodeWaiting = 0; },
+          setVisibility(hidden) { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => hidden ? 'hidden' : 'visible' }); document.dispatchEvent(new Event('visibilitychange')); },
+          unmount() { root.unmount(); },
           advanceClock(ms) { clockOffset += ms; },
           setObservedZoom(ratio) { Object.assign(lens, { zoom: ratio, observed_zoom: ratio }); },
           releaseInitial() { for (const resolve of initial.splice(0)) resolve(); },
           releaseLatest() { window.fixture.holdLatest = false; for (const resolve of latest.splice(0)) resolve(); },
-          resolveFocus() {
+          resolveFocus(ok = true) {
             Object.assign(lens, { focus_pending: true, last_focus_result: 'pending', timestamp_ms: Date.now() });
-            finishFocus({ ok: true, operation: { success: true, applied: true, focus_submitted: true }, settings: { ...lens } });
+            finishFocus(ok ? { ok: true, operation: { success: true, applied: true, focus_submitted: true }, settings: { ...lens } }
+              : { ok: false, error: { code: 'XIAOMI_FOCUS_FAILED', message: '手机未确认对焦' } });
           },
           resolveNextZoom() {
             const next = zoomWaiters.shift();
@@ -73,6 +93,11 @@ function fixtureBundle() {
             next.resolve({ ok: true, operation: { success: true, applied: true, saved: true }, settings: { ...lens } });
           },
           setFocusOutcome(result) { Object.assign(lens, { focus_pending: result === 'pending', last_focus_result: result, timestamp_ms: Date.now() }); }
+        };
+        const nativeDecode = HTMLImageElement.prototype.decode;
+        HTMLImageElement.prototype.decode = async function() {
+          await nativeDecode.call(this);
+          if (window.fixture.holdDecode) await new Promise(resolve => { counts.decodeWaiting++; decodeWaiters.push(resolve); });
         };
         window.ipcRenderer = { async invoke(channel, command) {
           if (channel !== 'xiaomi-camera:request') throw Error('unexpected channel');
@@ -90,18 +115,23 @@ function fixtureBundle() {
           }
           if (lensMode && command.action === 'preview') {
             counts.preview = (counts.preview || 0) + 1;
-            if (window.fixture.pausePreview) return { ok: false, error: { code: 'XIAOMI_PREVIEW_STALE', message: '等待新鲜预览' } };
-            const canvas = document.createElement('canvas'); canvas.width = 360; canvas.height = 640;
-            const ctx = canvas.getContext('2d'); ctx.fillStyle = counts.preview % 2 ? '#666' : '#999'; ctx.fillRect(0, 0, 360, 640);
-            return { ok: true, preview: { id: 'preview-' + counts.preview, dataUrl: canvas.toDataURL('image/jpeg'), capturedAt: Date.now(), expiresAt: Date.now() + 2000 } };
+            counts.previewActive++; counts.previewMax = Math.max(counts.previewMax, counts.previewActive);
+            try {
+              if (window.fixture.holdPreview) await new Promise(resolve => previewWaiters.push(resolve));
+              if (window.fixture.pausePreview) return { ok: false, error: { code: 'XIAOMI_PREVIEW_STALE', message: '等待新鲜预览' } };
+              const canvas = document.createElement('canvas'); canvas.width = 360; canvas.height = 640;
+              const ctx = canvas.getContext('2d'); ctx.fillStyle = counts.preview % 2 ? '#666' : '#999'; ctx.fillRect(0, 0, 360, 640);
+              return { ok: true, preview: { id: 'preview-' + counts.preview, dataUrl: canvas.toDataURL('image/jpeg'), capturedAt: Date.now(), expiresAt: Date.now() + 2000 } };
+            } finally { counts.previewActive--; }
           }
+          if (command.action === 'preview-cancel') return { ok: true };
           if (lensMode && command.action === 'focus') { focusCommands.push({ ...command, at: Date.now() }); return new Promise(resolve => { finishFocus = resolve }); }
           if (lensMode && command.action === 'zoom') { zoomCommands.push({ ratio: command.ratio, at: Date.now() }); return new Promise(resolve => { zoomWaiters.push({ ratio: command.ratio, resolve }); }); }
           if (command.action === 'start') return { ok: false, error: {
             code: 'XIAOMI_HTTP_503', message: '相机服务未确认操作，请重新查询状态和设置', outcomeUnknown: true } };
           throw Error('fixture refuses unexpected camera commands');
         } };
-        createRoot(document.getElementById('root')).render(React.createElement(XiaomiCameraControls));
+        root = createRoot(document.getElementById('root')); root.render(React.createElement(XiaomiCameraControls));
       `,
       resolveDir: process.cwd(),
       loader: 'tsx',
@@ -188,14 +218,127 @@ async function captureFixture(page: Awaited<ReturnType<typeof fixture>>, name: s
 }
 
 browserTest(
-  'point focus preserves the image and yellow marker until a real phone result changes its status',
+  'preview stays off by default, then serial requests wait for image decode at the target frame cadence',
+  async t => {
+    const page = await fixture(t, 'lens')
+    assert.equal(await page.evaluate(() => (window as FixtureWindow).fixture.counts.preview), 0)
+    await page.evaluate(() => {
+      ;(window as FixtureWindow).fixture.holdDecode = true
+    })
+    await page.getByRole('button', { name: '打开操作预览', exact: true }).click()
+    await page.waitForFunction(() => (window as FixtureWindow).fixture.counts.decodeWaiting === 1)
+    await new Promise(resolve => setTimeout(resolve, 120))
+    assert.equal(await page.evaluate(() => (window as FixtureWindow).fixture.counts.preview), 1)
+    await page.evaluate(() => (window as FixtureWindow).fixture.releaseDecode())
+    await page.getByRole('img', { name: '小米相机竖屏操作预览', exact: true }).waitFor()
+    await new Promise(resolve => setTimeout(resolve, 350))
+    const counts = await page.evaluate(() => (window as FixtureWindow).fixture.counts)
+    assert.ok(counts.preview >= 5, `expected continuous preview, got ${counts.preview}`)
+    assert.equal(counts.previewMax, 1)
+    assert.ok(counts.settings <= 3, `settings must not be read every frame: ${counts.settings}`)
+    assert.match(await page.locator('section').innerText(), /目标 30 帧\/秒/)
+    await page.getByText(/目标 30 帧\/秒；实际 (?!0\.0)\d+\.\d 帧\/秒/).waitFor()
+  },
+)
+
+browserTest(
+  'hiding or closing preview clears its image and cancels the request while a late frame cannot restore it',
   async t => {
     const page = await lensFixture(t)
     await page.evaluate(() => {
-      ;(window as FixtureWindow).fixture.pausePreview = true
+      ;(window as FixtureWindow).fixture.holdPreview = true
     })
+    await page.waitForFunction(() => (window as FixtureWindow).fixture.counts.previewActive === 1)
+    await page.evaluate(() => (window as FixtureWindow).fixture.setVisibility(true))
+    assert.equal(
+      await page.getByRole('img', { name: '小米相机竖屏操作预览', exact: true }).count(),
+      0,
+    )
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (window as FixtureWindow).fixture.calls.filter(action => action === 'preview-cancel')
+            .length,
+      ),
+      1,
+    )
+    await page.evaluate(() => (window as FixtureWindow).fixture.releasePreview())
+    await new Promise(resolve => setTimeout(resolve, 120))
+    assert.equal(
+      await page.getByRole('img', { name: '小米相机竖屏操作预览', exact: true }).count(),
+      0,
+    )
+    const hiddenCount = await page.evaluate(() => (window as FixtureWindow).fixture.counts.preview)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.equal(
+      await page.evaluate(() => (window as FixtureWindow).fixture.counts.preview),
+      hiddenCount,
+    )
+    await page.evaluate(() => (window as FixtureWindow).fixture.setVisibility(false))
+    await page.getByRole('img', { name: '小米相机竖屏操作预览', exact: true }).waitFor()
+    await page.getByRole('button', { name: '关闭操作预览', exact: true }).click()
+    assert.equal(
+      await page.getByRole('img', { name: '小米相机竖屏操作预览', exact: true }).count(),
+      0,
+    )
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (window as FixtureWindow).fixture.calls.filter(action => action === 'preview-cancel')
+            .length,
+      ),
+      2,
+    )
+    assert.equal(
+      await page.evaluate(() => (window as FixtureWindow).fixture.calls.includes('stop')),
+      false,
+    )
+  },
+)
+
+browserTest(
+  'a rejected point focus keeps the continuous preview alive and unmount cancels only its preview',
+  async t => {
+    const page = await lensFixture(t)
+    await page
+      .getByRole('img', { name: '小米相机竖屏操作预览', exact: true })
+      .click({ position: { x: 180, y: 320 } })
+    await page.evaluate(() => (window as FixtureWindow).fixture.resolveFocus(false))
+    await page.getByText('对焦请求失败，请刷新状态后重试', { exact: true }).waitFor()
+    const before = await page.evaluate(() => (window as FixtureWindow).fixture.counts.preview)
+    await new Promise(resolve => setTimeout(resolve, 350))
+    assert.ok(
+      (await page.evaluate(() => (window as FixtureWindow).fixture.counts.preview)) >= before + 5,
+    )
+    await page.evaluate(() => (window as FixtureWindow).fixture.unmount())
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (window as FixtureWindow).fixture.calls.filter(action => action === 'preview-cancel')
+            .length,
+      ),
+      1,
+    )
+    assert.equal(
+      await page.evaluate(() => (window as FixtureWindow).fixture.focusCommands.length),
+      1,
+    )
+    assert.equal(
+      await page.evaluate(() => (window as FixtureWindow).fixture.calls.includes('stop')),
+      false,
+    )
+  },
+)
+
+browserTest(
+  'point focus preserves the image and yellow marker until a real phone result changes its status',
+  async t => {
+    const page = await lensFixture(t)
     const img = page.getByRole('img', { name: '小米相机竖屏操作预览', exact: true })
     await img.click({ position: { x: 90, y: 480 } })
+    await page.evaluate(() => {
+      ;(window as FixtureWindow).fixture.pausePreview = true
+    })
     const marker = page.getByRole('img', { name: '点按对焦位置', exact: true })
     await marker.waitFor()
     assert.equal(await img.isVisible(), true)
@@ -239,6 +382,7 @@ browserTest(
       await marker.evaluate(node => (node as HTMLElement).style.borderColor),
       'rgb(34, 197, 94)',
     )
+    assert.equal(await page.getByText('等待新鲜预览', { exact: true }).count(), 0)
     await captureFixture(page, 'xiaomi-focus-green')
     assert.equal(
       await page.evaluate(() => (window as FixtureWindow).fixture.focusCommands.length),

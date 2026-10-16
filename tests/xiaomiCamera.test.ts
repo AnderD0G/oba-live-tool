@@ -279,3 +279,64 @@ test('zoom requires a matching observed setting and a new preview before focus s
   assert.equal((await service.execute({ action: 'preview' })).ok, true)
   assert.equal(previews, 2)
 })
+
+test('high frame rate clients cannot evict a displayed preview before its existing two second expiry', async () => {
+  let time = 1000
+  const service = new XiaomiCameraService({
+    store: store(),
+    now: () => time,
+    transport: async request =>
+      request.url.endsWith('/preview.jpg')
+        ? {
+            status: 200,
+            headers: { 'content-type': 'image/jpeg', 'x-preview-age-ms': '0' },
+            body: Buffer.from([255, 216, 255, 217]),
+          }
+        : json({ success: true, applied: true, focus_submitted: true }),
+  })
+  const shown = await service.execute({ action: 'preview' })
+  assert.ok(shown.preview)
+  for (let frame = 0; frame < 120; frame++) {
+    time += 8
+    assert.equal((await service.execute({ action: 'preview' })).ok, true)
+  }
+  assert.equal(
+    (await service.execute({ action: 'focus', x: 0.5, y: 0.5, previewId: shown.preview.id })).ok,
+    true,
+  )
+  const next = await service.execute({ action: 'preview' })
+  assert.ok(next.preview)
+  time = next.preview.expiresAt
+  assert.equal(
+    (await service.execute({ action: 'focus', x: 0.5, y: 0.5, previewId: next.preview.id })).error
+      ?.code,
+    'XIAOMI_PREVIEW_STALE',
+  )
+})
+
+test('only preview receives cancellation and a cancelled response cannot issue a focus token', async () => {
+  const requests: XiaomiCameraHttpRequest[] = []
+  const controller = new AbortController()
+  const service = new XiaomiCameraService({
+    store: store(),
+    transport: async request => {
+      requests.push(request)
+      if (request.url.endsWith('/preview.jpg')) {
+        controller.abort()
+        return {
+          status: 200,
+          headers: { 'content-type': 'image/jpeg', 'x-preview-age-ms': '0' },
+          body: Buffer.from([255, 216, 255, 217]),
+        }
+      }
+      return json({ success: true, applied: true })
+    },
+  })
+  const preview = await service.execute({ action: 'preview' }, controller.signal)
+  assert.equal(requests[0].signal, controller.signal)
+  assert.equal(preview.error?.code, 'XIAOMI_PREVIEW_CANCELLED')
+  assert.equal(preview.preview, undefined)
+  assert.equal(preview.error?.outcomeUnknown, undefined)
+  assert.equal((await service.execute({ action: 'autofocus' }, controller.signal)).ok, true)
+  assert.equal(requests[1].signal, undefined)
+})

@@ -26,6 +26,7 @@ export interface XiaomiCameraHttpRequest {
   body?: string
   timeoutMs: number
   maxBytes: number
+  signal?: AbortSignal
 }
 export interface XiaomiCameraHttpResponse {
   status: number
@@ -229,10 +230,21 @@ export const xiaomiCameraHttpTransport: XiaomiCameraTransport = request =>
   new Promise((resolve, reject) => {
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    let incoming: http.IncomingMessage | undefined
+    const abortError = () =>
+      Object.assign(new Error('Camera preview cancelled'), { code: 'ABORT_ERR' })
+    if (request.signal?.aborted) {
+      reject(abortError())
+      return
+    }
+    const cleanup = () => {
+      if (timer) clearTimeout(timer)
+      request.signal?.removeEventListener('abort', abort)
+    }
     const failRequest = (error: unknown) => {
       if (settled) return
       settled = true
-      if (timer) clearTimeout(timer)
+      cleanup()
       reject(error)
     }
     const target = new URL(request.url)
@@ -241,6 +253,11 @@ export const xiaomiCameraHttpTransport: XiaomiCameraTransport = request =>
       target,
       { method: request.method, headers: request.headers },
       response => {
+        incoming = response
+        if (settled) {
+          response.destroy()
+          return
+        }
         const chunks: Buffer[] = []
         let size = 0
         response.on('data', (chunk: Buffer) => {
@@ -259,7 +276,7 @@ export const xiaomiCameraHttpTransport: XiaomiCameraTransport = request =>
         response.on('end', () => {
           if (settled) return
           settled = true
-          if (timer) clearTimeout(timer)
+          cleanup()
           const headers: Record<string, string> = {}
           for (const [key, value] of Object.entries(response.headers))
             if (typeof value === 'string') headers[key] = value
@@ -271,11 +288,21 @@ export const xiaomiCameraHttpTransport: XiaomiCameraTransport = request =>
         })
       },
     )
+    const abort = () => {
+      failRequest(abortError())
+      incoming?.destroy()
+      outgoing.destroy()
+    }
     timer = setTimeout(() => {
       failRequest(Object.assign(new Error('Camera request timed out'), { code: 'ETIMEDOUT' }))
       outgoing.destroy()
     }, request.timeoutMs)
     outgoing.on('error', failRequest)
+    request.signal?.addEventListener('abort', abort, { once: true })
+    if (request.signal?.aborted) {
+      abort()
+      return
+    }
     if (request.body !== undefined) outgoing.write(request.body)
     outgoing.end()
   })
@@ -306,10 +333,13 @@ export class XiaomiCameraService {
     this.previews.clear()
   }
 
-  async execute(input: unknown): Promise<XiaomiCameraResult> {
+  async execute(input: unknown, signal?: AbortSignal): Promise<XiaomiCameraResult> {
     let writing = false
+    let previewSignal: AbortSignal | undefined
     try {
       const value = command(input)
+      previewSignal = value.action === 'preview' ? signal : undefined
+      if (previewSignal?.aborted) return fail('XIAOMI_PREVIEW_CANCELLED', '预览请求已取消')
       const stored = this.options.store.load()
       const config = {
         baseUrl: validateXiaomiCameraBaseUrl(stored.baseUrl),
@@ -392,12 +422,14 @@ export class XiaomiCameraService {
         timeoutMs: value.action === 'start' || value.action === 'stop' ? 180000 : 30000,
         maxBytes: value.action === 'preview' ? 512 * 1024 : 65536,
       }
+      if (previewSignal) request.signal = previewSignal
       if (write) {
         request.body = JSON.stringify(body)
         request.headers['Content-Type'] = 'application/json'
         request.headers['Content-Length'] = String(Buffer.byteLength(request.body))
       }
       const response = await this.transport(request)
+      if (previewSignal?.aborted) return fail('XIAOMI_PREVIEW_CANCELLED', '预览请求已取消')
       if (response.status >= 300 && response.status < 400)
         return fail('XIAOMI_REDIRECT_BLOCKED', '相机服务返回重定向，已拒绝转发密钥')
       if (response.body.length > request.maxBytes)
@@ -426,7 +458,7 @@ export class XiaomiCameraService {
           return fail('XIAOMI_PREVIEW_STALE', '没有可用于选点的新鲜预览，请稍后刷新')
         for (const [id, preview] of this.previews)
           if (preview.expiresAt <= this.now()) this.previews.delete(id)
-        while (this.previews.size >= 4) {
+        while (this.previews.size >= 256) {
           const oldest = this.previews.keys().next()
           if (oldest.done) break
           this.previews.delete(oldest.value)
@@ -545,6 +577,8 @@ export class XiaomiCameraService {
           },
         }
       const code = record(error) ? error.code : undefined
+      if (code === 'ABORT_ERR' && previewSignal?.aborted)
+        return { ok: false, error: { code: 'XIAOMI_PREVIEW_CANCELLED', message: '预览请求已取消' } }
       if (code === 'XIAOMI_CONFIG_UNREADABLE')
         return {
           ok: false,

@@ -46,6 +46,7 @@ export type XiaomiCameraCommand =
   | { action: 'config-get' }
   | { action: 'config-save'; config: { baseUrl: string; token?: string } }
   | { action: 'status' | 'settings' | 'start' | 'stop' | 'autofocus' | 'preview' }
+  | { action: 'preview-cancel' }
   | { action: 'zoom'; ratio: number }
   | { action: 'focus'; x: number; y: number; previewId: string }
 export interface XiaomiCameraResult {

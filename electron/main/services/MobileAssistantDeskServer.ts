@@ -22,7 +22,7 @@ export interface MobileAssistantDeskServerOptions {
   voice?: (command: AssistantVoiceCommand) => Promise<AssistantVoiceResult>
   camera?: (command: MobileAssistantCameraCommand) => Promise<ObsEffectResponse>
   studioMic?: (command: MobileStudioMicCommand) => Promise<StudioMicHotkeyResult>
-  xiaomi?: (command: Exclude<XiaomiCameraCommand, { action: 'config-get' } | { action: 'config-save' }>) => Promise<XiaomiCameraResult>
+  xiaomi?: (command: Exclude<XiaomiCameraCommand, { action: 'config-get' } | { action: 'config-save' } | { action: 'preview-cancel' }>, signal?: AbortSignal) => Promise<XiaomiCameraResult>
   voiceScene?: (accountId: string, rowId: string) => Promise<Pick<AssistantDeskState, 'activeSession' | 'rows' | 'attention'>>
   trace?: AssistantDiagnosticTrace
   host?: string
@@ -305,7 +305,7 @@ export class MobileAssistantDeskServer {
         : !data.running ? SAFE_MESSAGES.STUDIO_MIC_NOT_RUNNING : !data.accessGranted ? SAFE_MESSAGES.STUDIO_MIC_PERMISSION_REQUIRED : '热键助手已就绪；直播麦克风状态仍需在 TikTok LIVE Studio 核对' } }
   }
 
-  private async xiaomiCommand(body: unknown): Promise<AssistantDeskResult> {
+  private async xiaomiCommand(body: unknown, signal?: AbortSignal): Promise<AssistantDeskResult> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return failure('MOBILE_INVALID_COMMAND', '镜头操作参数无效')
     const input = body as Record<string, unknown>
     const simple = ['status', 'settings', 'start', 'stop', 'autofocus', 'preview'].includes(input.action as string)
@@ -316,7 +316,7 @@ export class MobileAssistantDeskServer {
         && typeof input.previewId === 'string' && /^[a-zA-Z0-9_-]{1,256}$/.test(input.previewId)
     if (!valid) return failure('MOBILE_INVALID_COMMAND', '镜头操作参数无效')
     if (!this.options.xiaomi) return failure('XIAOMI_CONNECTION_FAILED', '小米相机控制未就绪，请在电脑端检查')
-    const result = await this.options.xiaomi(body as Exclude<XiaomiCameraCommand, { action: 'config-get' } | { action: 'config-save' }>)
+    const result = await this.options.xiaomi(body as Exclude<XiaomiCameraCommand, { action: 'config-get' } | { action: 'config-save' } | { action: 'preview-cancel' }>, signal)
     if (!result.ok) {
       const code = result.error?.code && /^XIAOMI_[A-Z0-9_]{1,50}$/.test(result.error.code) ? result.error.code : 'XIAOMI_CONNECTION_FAILED'
       const messages: Record<string, string> = { XIAOMI_PREVIEW_STALE: '预览已过期，请刷新图像后再点选对焦', XIAOMI_ZOOM_PENDING: '请先刷新镜头设置，等待实际倍率确认后再获取预览', XIAOMI_TOKEN_REQUIRED: '请先在电脑上保存小米相机密钥', XIAOMI_BUSY: '镜头操作正在进行，请稍候', XIAOMI_RATE_LIMITED: '镜头操作太快，请稍后再试' }
@@ -455,7 +455,9 @@ export class MobileAssistantDeskServer {
       const isVoice = path === `${base}api/voice`
       const control = path === `${base}api/camera` ? 'camera' : path === `${base}api/studio-mic` ? 'studio-mic' : path === `${base}api/xiaomi` ? 'xiaomi' : undefined
       if (!isVoice && !control && path !== `${base}api/command`) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
-      diagnostic = { traceId: randomUUID(), action: isVoice ? 'mobile.voice' : 'mobile.command', accountId: this.options.accountId }
+      // Image frames are a high-frequency read stream, not operator actions.
+      // Defer Xiaomi tracing until its body distinguishes a frame from a control.
+      if (control !== 'xiaomi') diagnostic = { traceId: randomUUID(), action: isVoice ? 'mobile.voice' : 'mobile.command', accountId: this.options.accountId }
       diagnosticStarted = performance.now()
       trace('start')
       let diagnosticFinished = false
@@ -465,10 +467,26 @@ export class MobileAssistantDeskServer {
       if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') return send(415, failure('MOBILE_CONTENT_TYPE', '请求格式须为JSON'))
       if (Number(request.headers['content-length']) > MAX_BODY_BYTES) return send(413, failure('MOBILE_BODY_TOO_LARGE', '请求超过16KiB上限'))
       const body = await readJson(request)
+      if (control === 'xiaomi' && !(body && typeof body === 'object' && (body as Record<string, unknown>).action === 'preview')) {
+        diagnostic = { traceId: randomUUID(), action: 'mobile.xiaomi', accountId: this.options.accountId }
+        diagnosticStarted = performance.now()
+        trace('start')
+      }
       if (control) {
-        diagnostic.action = `mobile.${control}`
-        if (!access.active || this.access !== access || request.aborted) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
-        const result = await (control === 'camera' ? this.cameraCommand(body) : control === 'xiaomi' ? this.xiaomiCommand(body) : this.studioMicCommand(body))
+        if (diagnostic) diagnostic.action = `mobile.${control}`
+        if (!access.active || this.access !== access || request.aborted || response.destroyed) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
+        // Every phone owns only its current read. Closing a preview must not abort
+        // another viewer or an already accepted camera/lens write.
+        const preview = control === 'xiaomi' && body && typeof body === 'object' && (body as Record<string, unknown>).action === 'preview'
+        const controller = preview ? new AbortController() : undefined
+        const abandoned = () => controller?.abort()
+        if (controller) response.once('close', abandoned)
+        let result: AssistantDeskResult
+        try {
+          result = await (control === 'camera' ? this.cameraCommand(body) : control === 'xiaomi' ? this.xiaomiCommand(body, controller?.signal) : this.studioMicCommand(body))
+        } finally {
+          if (controller) response.removeListener('close', abandoned)
+        }
         if (!access.active || this.access !== access) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
         return send(result.ok ? 200 : 400, result)
       }
@@ -482,8 +500,10 @@ export class MobileAssistantDeskServer {
           return send(400, failure('MOBILE_INVALID_COMMAND', '语音输入参数无效'))
         if (!access.active || this.access !== access) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
         const voiceCommand: AssistantVoiceCommand = { action: input.action as AssistantVoiceCommand['action'], rowId: input.rowId, accountId: this.options.accountId }
-        diagnostic.rowId = voiceCommand.rowId
-        diagnostic.action = `mobile.voice.${voiceCommand.action}`
+        if (diagnostic) {
+          diagnostic.rowId = voiceCommand.rowId
+          diagnostic.action = `mobile.voice.${voiceCommand.action}`
+        }
         let startDispatched = false, startSettled = false, startMayOwn = false, responseAbandoned = false
         let abandonedCleanup: Promise<void> | undefined
         const unavailable = () => responseAbandoned || response.destroyed || request.aborted || !access.active || this.access !== access
@@ -562,9 +582,11 @@ export class MobileAssistantDeskServer {
         if (input.action === 'segment-toggle' && !['requestId', 'sessionId', 'expectedOpenSegmentId'].every(key => Object.hasOwn(params, key))) throw new Error()
         command = validateDeskHttp('/assistant/command', { action: input.action, params: { ...params, accountId: this.options.accountId } }) as AssistantDeskCommand
       } catch { return send(400, failure('MOBILE_INVALID_COMMAND', '操作或参数无效')) }
-      diagnostic.action = `mobile.${command.action}`
-      if ('rowId' in command.params) diagnostic.rowId = command.params.rowId
-      if ('requestId' in command.params) diagnostic.requestId = command.params.requestId
+      if (diagnostic) {
+        diagnostic.action = `mobile.${command.action}`
+        if ('rowId' in command.params) diagnostic.rowId = command.params.rowId
+        if ('requestId' in command.params) diagnostic.requestId = command.params.requestId
+      }
       if (!access.active || this.access !== access) return send(404, failure('MOBILE_NOT_FOUND', '页面不存在'))
       let sessionId: string | undefined
       const rowId = 'rowId' in command.params ? command.params.rowId : undefined
