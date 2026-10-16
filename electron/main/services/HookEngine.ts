@@ -28,6 +28,9 @@ export interface HookRuntime {
 }
 
 interface HookExecutionContext {
+  /** Optional disposable execution scope; real hooks retain their existing behavior. */
+  signal?: AbortSignal
+  current?: () => boolean
   /** Main-process classification of this event against this account's current saved policy. */
   audiencePolicy?: Pick<AssistantAudienceTriage, 'matchedRuleId' | 'label' | 'tier' | 'policyRevision'>
   welcomePolicy?: { tier: 'gold' | 'silver' | 'neutral'; welcomePresetId?: string }
@@ -451,6 +454,8 @@ export class HookEngine {
     ruleName: string,
     eventType?: string,
   ) {
+    if (context.signal?.aborted || context.current && !context.current())
+      throw new Error('Hook execution was cancelled')
     const templateData = { ...eventData, actions: outputs }
     switch (action.type) {
       case 'obs.show-source': {
@@ -516,7 +521,7 @@ export class HookEngine {
         return { text }
       }
       case 'delay':
-        await delay(action.durationMs)
+        await delay(action.durationMs, undefined, { signal: context.signal })
         return { durationMs: action.durationMs }
     }
   }

@@ -1,6 +1,7 @@
 export const IPC_CHANNELS = {
   effectGroups: { request: 'effect-groups:request' },
   assistantDesk: { request: 'assistant-desk:request' },
+  mockAssistant: { request: 'mock-assistant:request' },
   assistantMobile: { request: 'assistant-mobile:request' },
   assistantVoice: { request: 'assistant-voice:request' },
   studioMicHotkey: { request: 'studio-mic-hotkey:request' },

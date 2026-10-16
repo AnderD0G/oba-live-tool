@@ -28,6 +28,7 @@ import type {EffectActionKind} from '../../../shared/effectGroups'
 import { welcomePreset } from '../../../shared/obsWelcome'
 
 let analysisHookSettings: () => HookSettings = () => defaultHookSettings
+export function snapshotMockHookSettings(){return structuredClone(analysisHookSettings())}
 let assistantEffectDispatch:((accountId:string,message:LiveMessage,row?:AssistantDeskRow,legacyEnabled?:boolean)=>Promise<void>)|undefined
 let effectGroupsBridge:{nextSequence:()=>number;ownsAction:(accountId:string,action:EffectActionKind)=>boolean;dispatchPersisted:(row:AssistantDeskRow,sequence:number)=>Promise<{handled:boolean}>}|undefined
 export function registerEffectGroupsBridge(bridge:NonNullable<typeof effectGroupsBridge>){effectGroupsBridge=bridge}

@@ -1,0 +1,1302 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OBA Mock batch preparation API",
+    "version": "1.0.0",
+    "description": "Disabled until enabled on the desktop. Upload prepares RAM data only. Playback and all public sends require separate desktop controls."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "security": [
+    {
+      "mockBearer": []
+    }
+  ],
+  "paths": {
+    "/mock/metadata": {
+      "get": {
+        "summary": "Export the current safe catalog and policy projection",
+        "responses": {
+          "200": {
+            "description": "Safe metadata and a valid minimal example",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MockMetadata"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or invalid batch fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid independent Mock bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin, Host, account or selected platform mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Metadata revision changed; export metadata again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 2 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Local Mock provider failed; details are not exposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mock/status": {
+      "get": {
+        "summary": "Read only this account Mock runtime status",
+        "responses": {
+          "200": {
+            "description": "RAM runtime status without credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MockRuntimeStatus"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or invalid batch fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid independent Mock bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin, Host, account or selected platform mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Metadata revision changed; export metadata again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 2 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Local Mock provider failed; details are not exposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mock/batches": {
+      "post": {
+        "summary": "Validate and prepare a batch in RAM; never starts playback",
+        "description": "User and event IDs must be unique. Events reference users[].id and atMs must not exceed durationMs. The account and current metadataRevision must match. No extra properties are accepted.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MockBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Prepared in RAM; still not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MockRuntimeStatus"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or invalid batch fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid independent Mock bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin, Host, account or selected platform mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Metadata revision changed; export metadata again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 2 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Local Mock provider failed; details are not exposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mock/openapi.json": {
+      "get": {
+        "summary": "Read this public schema",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document without credentials"
+          }
+        }
+      }
+    },
+    "/mock/overview": {
+      "get": {
+        "summary": "Read the public worker workflow",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Plain-text overview without credentials"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "mockBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Independent, account-bound, RAM-only Mock token shown by the desktop. It grants metadata/status reads and batch preparation only. Never put it in a URL."
+      }
+    },
+    "schemas": {
+      "MockBatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1
+          },
+          "accountId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[^\\s\\u0000-\\u001f\\u007f]+$"
+          },
+          "metadataRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "batchId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1800000
+          },
+          "users": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                },
+                "nickname": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                },
+                "payLevel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "fansClubLevel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "followerCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000000
+                },
+                "followingCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000000
+                },
+                "followStatus": {
+                  "type": "integer",
+                  "enum": [
+                    1,
+                    2
+                  ]
+                },
+                "subscriptionActive": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "manualCountry": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{2}$"
+                }
+              },
+              "required": [
+                "id",
+                "nickname"
+              ]
+            }
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5000,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1800000
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "comment"
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000,
+                      "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]+$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "userId",
+                    "atMs",
+                    "kind",
+                    "text"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1800000
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "enter"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "userId",
+                    "atMs",
+                    "kind"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1800000
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "leave"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "userId",
+                    "atMs",
+                    "kind"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1800000
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "follow"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "userId",
+                    "atMs",
+                    "kind"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1800000
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "like"
+                    },
+                    "likeCount": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000000
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "userId",
+                    "atMs",
+                    "kind"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1800000
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "gift"
+                    },
+                    "gift": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                        },
+                        "groupId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000000
+                        },
+                        "final": {
+                          "type": "boolean"
+                        },
+                        "unitCoins": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000000000
+                        },
+                        "totalCoins": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000000000
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "final"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "userId",
+                    "atMs",
+                    "kind",
+                    "gift"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1800000
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "event"
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000,
+                      "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]+$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "userId",
+                    "atMs",
+                    "kind",
+                    "text"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "version",
+          "accountId",
+          "metadataRevision",
+          "batchId",
+          "name",
+          "durationMs",
+          "users",
+          "events"
+        ]
+      },
+      "MockMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "scope": {
+            "const": "mock"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "metadataRevision": {
+            "type": "string"
+          },
+          "catalog": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "operators": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "eq",
+                          "gte",
+                          "lte",
+                          "in"
+                        ]
+                      }
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "label",
+                    "type",
+                    "operators",
+                    "source",
+                    "description"
+                  ]
+                }
+              },
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "countries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "label"
+                  ]
+                }
+              },
+              "scripts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "label"
+                  ]
+                }
+              },
+              "languages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "label"
+                  ]
+                }
+              },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "rules": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "conditionsPerRule": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "rules",
+                  "conditionsPerRule"
+                ]
+              },
+              "publicFields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "label",
+                    "source",
+                    "description"
+                  ]
+                }
+              },
+              "unknownFields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "label",
+                    "source",
+                    "description"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "version",
+              "fields",
+              "categories",
+              "countries",
+              "limits"
+            ]
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "priority": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "conditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "operator": {
+                            "enum": [
+                              "eq",
+                              "gte",
+                              "lte",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "oneOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "operator",
+                          "value"
+                        ]
+                      }
+                    },
+                    "result": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "tier": {
+                          "enum": [
+                            "gold",
+                            "silver",
+                            "neutral"
+                          ]
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "autoAttention": {
+                          "type": "boolean"
+                        },
+                        "welcomePresetId": {
+                          "type": "string"
+                        },
+                        "cardColor": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "tier",
+                        "label",
+                        "autoAttention"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "enabled",
+                    "priority",
+                    "conditions",
+                    "result"
+                  ]
+                }
+              },
+              "attentionWindowSeconds": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "revision",
+              "enabled",
+              "rules",
+              "attentionWindowSeconds"
+            ]
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxBodyBytes": {
+                "type": "integer",
+                "const": 2097152
+              },
+              "maxUsers": {
+                "type": "integer",
+                "const": 1000
+              },
+              "maxEvents": {
+                "type": "integer",
+                "const": 5000
+              },
+              "maxDurationMs": {
+                "type": "integer",
+                "const": 1800000
+              },
+              "maxTextLength": {
+                "type": "integer",
+                "const": 2000
+              },
+              "maxNicknameLength": {
+                "type": "integer",
+                "const": 100
+              }
+            },
+            "required": [
+              "maxBodyBytes",
+              "maxUsers",
+              "maxEvents",
+              "maxDurationMs",
+              "maxTextLength",
+              "maxNicknameLength"
+            ]
+          },
+          "eventKinds": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "comment",
+                "enter",
+                "leave",
+                "follow",
+                "like",
+                "gift",
+                "event"
+              ]
+            }
+          },
+          "example": {
+            "$ref": "#/components/schemas/MockBatch"
+          }
+        },
+        "required": [
+          "version",
+          "scope",
+          "accountId",
+          "metadataRevision",
+          "catalog",
+          "policy",
+          "limits",
+          "eventKinds",
+          "example"
+        ]
+      },
+      "MockRuntimeStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "idle",
+              "prepared",
+              "running",
+              "stopped"
+            ]
+          },
+          "volatile": {
+            "const": true
+          },
+          "emitted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runId": {
+            "type": "string"
+          },
+          "batch": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "batchId": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "metadataRevision": {
+                "type": "string"
+              },
+              "userCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "eventCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "durationMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "batchId",
+              "name",
+              "metadataRevision",
+              "userCount",
+              "eventCount",
+              "durationMs"
+            ]
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "accountId",
+          "selected",
+          "phase",
+          "volatile",
+          "emitted"
+        ]
+      },
+      "MockError": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      }
+    }
+  }
+}

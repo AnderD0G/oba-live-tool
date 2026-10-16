@@ -1,5 +1,6 @@
 import { setupAIChatIpcHandlers } from './aichat'
 import { setupAssistantDeskIpc } from './assistantDesk'
+import { setupMockAssistantIpc } from './mockAssistant'
 import { setupAssistantMobileIpc } from './assistantMobile'
 import { setupAssistantVoiceIpc } from './assistantVoice'
 import { setupStudioMicHotkeyIpc } from './studioMicHotkey'
@@ -36,6 +37,7 @@ export async function setupIpcHandlers() {
   setupDeepSeekAutoIpcHandlers()
   setupPlatformSessionIpc()
   setupAssistantDeskIpc()
+  setupMockAssistantIpc()
   setupAssistantMobileIpc()
   setupAssistantVoiceIpc()
   setupStudioMicHotkeyIpc()

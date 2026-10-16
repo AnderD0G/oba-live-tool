@@ -20,6 +20,7 @@ import { parseTikTokLiveTarget } from '../../../shared/platformSession'
 import { ContextPanel } from './ContextPanel'
 import { CameraControls } from './CameraControls'
 import { StudioMicrophoneControl } from './StudioMicrophoneControl'
+import { MockAssistantPanel } from './MockAssistantPanel'
 import { MobileDeskAccess } from './MobileDeskAccess'
 import { AudiencePolicyPanel } from './AudiencePolicyPanel'
 import { BrowserTranslationNotice } from './BrowserTranslationNotice'
@@ -47,7 +48,14 @@ const roomLabels = {
   disconnected: '人数连接已断开',
 }
 
-export function AssistantDeskView({
+export function AssistantDeskView(props: { controller: AssistantDeskController; accountName: string }) {
+  const { controller } = props
+  const source = controller.state?.provenance
+  const key = `${controller.accountId}:${controller.sourceRevision}:${source?.mode === 'mock' ? source.runId : 'real'}`
+  return <AssistantDeskContents key={key} {...props} />
+}
+
+function AssistantDeskContents({
   controller,
   accountName,
 }: {
@@ -55,6 +63,7 @@ export function AssistantDeskView({
   accountName: string
 }) {
   const { accountId, state, platform, platformWarning, qr, pending, busy, request, platformRequest } = controller
+  const simulated = state?.provenance?.mode === 'mock'
   const policyOwner = useRef(accountId)
   policyOwner.current = accountId
   const [knownPolicy, setKnownPolicy] = useState<{ accountId: string; policy: AssistantAudiencePolicy }>()
@@ -103,6 +112,7 @@ export function AssistantDeskView({
   }
   const captureStopping = !!pending.stop
   const captureActive = captureStopping || !!state?.activeSession && state.activeSession.endedAt === undefined
+  const realCaptureActive = captureActive && !simulated
   const capturing = captureActive && state?.activeSession?.status === 'collecting'
   const captureStorageError = captureActive && state?.activeSession?.status === 'storage-error'
   const manualTranslation = state && ['browser', 'local'].includes(state.context.translationMode ?? 'ai')
@@ -204,9 +214,18 @@ export function AssistantDeskView({
           </Button>
         </div>
       </header>
+      {simulated && <div role="status" className="assistant-mock-banner">
+        <strong>模拟数据 · 仅内存</strong>
+        <span>清空或退出应用后消失；回复仅手动发送。</span>
+        <span>{state.mockReplyTarget?.ready && state.mockReplyTarget.username ? `真实发送目标：@${state.mockReplyTarget.username}` : '未选择真实直播间'}</span>
+      </div>}
       <MobileDeskAccess accountId={accountId} accountName={accountName} />
       <CameraControls />
       <StudioMicrophoneControl />
+      <MockAssistantPanel accountId={accountId} realCaptureActive={realCaptureActive} onChanged={async action => {
+        if (['start', 'clear', 'leave'].includes(action)) controller.resetSource()
+        await controller.refresh()
+      }} />
       <div className="assistant-stat-grid">
         <div className="assistant-stat">
           <Users size={18} />
@@ -295,7 +314,7 @@ export function AssistantDeskView({
           <div className="assistant-login-actions">
             <Button
               variant="outline"
-              disabled={busy || platform?.busy || captureActive || platform?.supported === false || !!platform?.browserOpen || !target.trim()}
+              disabled={busy || platform?.busy || realCaptureActive || platform?.supported === false || !!platform?.browserOpen || !target.trim()}
               onClick={connectExistingChrome}
             >
               <RefreshCw />
@@ -306,7 +325,7 @@ export function AssistantDeskView({
               disabled={
                 busy ||
                 platform?.busy ||
-                captureActive ||
+                realCaptureActive ||
                 platform?.supported === false ||
                 !!platform?.browserOpen
               }
@@ -340,7 +359,7 @@ export function AssistantDeskView({
                 placeholder="https://www.tiktok.com/@主播/live 或 @主播"
                 value={target}
                 maxLength={512}
-                disabled={captureActive || busy || platform?.busy}
+                disabled={realCaptureActive || busy || platform?.busy}
                 onChange={event => setTarget(event.target.value)}
               />
               <Button
@@ -349,7 +368,7 @@ export function AssistantDeskView({
                   !authenticated ||
                   !platform?.sessionId ||
                   !target.trim() ||
-                  captureActive ||
+                  realCaptureActive ||
                   busy ||
                   platform?.busy
                 }
@@ -368,7 +387,7 @@ export function AssistantDeskView({
             </div>
           </div>
           <Button
-            disabled={captureActive ? !!pending.stop : busy || !state || !startEnabled}
+            disabled={simulated || (captureActive ? !!pending.stop : busy || !state || !startEnabled)}
             variant={captureActive ? 'outline' : 'default'}
             onClick={() =>
               void request(
@@ -386,7 +405,7 @@ export function AssistantDeskView({
             }
           >
             {captureActive ? <Square /> : <Play />}
-            {pending.stop
+            {simulated ? '模拟模式（由模拟面板控制）' : pending.stop
               ? '正在停止…'
               : pending.start
                 ? '正在开始…'
@@ -403,7 +422,7 @@ export function AssistantDeskView({
           <Button
             size="sm"
             variant="ghost"
-            disabled={busy || !capturing || !authenticated}
+            disabled={simulated || busy || !capturing || !authenticated}
             onClick={() =>
               void request({
                 action: 'test-send',
@@ -579,7 +598,7 @@ export function AssistantDeskView({
             </details>
             <p className="assistant-muted">
               显示 {filteredRows.length} / 当前现场 {liveRows.length}{' '}
-              条。现场筛选只影响实时显示；存档保存全量事实，并有独立筛选。
+              条。现场筛选只影响实时显示；{simulated ? '模拟历史仅在内存中' : '存档保存全量事实'}，并有独立筛选。
             </p>
           </section>
           <MessageBatchReader

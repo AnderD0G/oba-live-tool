@@ -38,7 +38,8 @@ export class EffectGroupStore {
   readonly installId: string
   private closed = false
 
-  constructor(readonly file: string) {
+  constructor(readonly file: string, options: { memoryOwner?: string } = {}) {
+    if (options.memoryOwner && file !== ':memory:') throw new Error('A copied resource owner is allowed only in RAM')
     if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true })
     this.db = new DatabaseSync(file)
     try {
@@ -91,7 +92,7 @@ export class EffectGroupStore {
       `)
       this.db.prepare("INSERT OR IGNORE INTO metadata(key,value) VALUES('schemaVersion','1')").run()
       if (this.db.prepare("SELECT value FROM metadata WHERE key='schemaVersion'").get()?.value !== '1') throw new EffectGroupError('EFFECT_GROUP_SCHEMA', 'Unsupported effect groups database schema')
-      this.db.prepare("INSERT OR IGNORE INTO metadata(key,value) VALUES('installId',?)").run(randomUUID())
+      this.db.prepare("INSERT OR IGNORE INTO metadata(key,value) VALUES('installId',?)").run(options.memoryOwner ?? randomUUID())
       this.installId = String(this.db.prepare("SELECT value FROM metadata WHERE key='installId'").get()!.value)
     } catch (error) { this.db.close(); throw error }
   }

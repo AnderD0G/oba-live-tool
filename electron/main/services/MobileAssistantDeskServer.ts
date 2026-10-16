@@ -114,6 +114,11 @@ export function projectMobileAssistantState(state: AssistantDeskState, accountId
   const openSegment = marker.open
   return {
     accountId, accountName, serverNow, collecting, captureActive: !!session,
+    ...(state.provenance?.mode === 'mock' ? {
+      provenance: { mode: 'mock' as const, runId: state.provenance.runId },
+      mockReplyTarget: { ready: state.mockReplyTarget?.ready === true,
+        ...(typeof state.mockReplyTarget?.username === 'string' ? { username: state.mockReplyTarget.username } : {}) },
+    } : {}),
     ...(session ? { sessionId: session.id, captureStatus: session.status as 'collecting' | 'storage-error' } : {}),
     rows: state.rows.filter(current).map(projectRow), tasks: tasks.map(projectRow),
     totalTasks: session ? Math.max(state.attention?.total ?? 0, tasks.length) : 0, pinnedRowIds,

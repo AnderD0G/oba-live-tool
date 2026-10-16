@@ -153,12 +153,12 @@ export class AssistantDeskDerivedIndex {
   private windowCountsStatement: StatementSync
   private partialWindowStatement: StatementSync
 
-  constructor(folder: string, options: { filename?: string } = {}) {
+  constructor(folder: string, options: { filename?: string; memory?: boolean } = {}) {
     const basename = options.filename ?? `assistant-derived-${randomUUID()}.sqlite`
     if (!/^[a-zA-Z0-9_.-]+\.sqlite$/.test(basename)) throw new Error('Invalid derived index filename')
     const directory = join(folder, 'derived')
-    mkdirSync(directory, { recursive: true })
-    this.filename = join(directory, basename)
+    if (!options.memory) mkdirSync(directory, { recursive: true })
+    this.filename = options.memory ? ':memory:' : join(directory, basename)
     this.db = new DatabaseSync(this.filename)
     // Deterministic Unicode case normalization is shared with the request validator.
     // Only a disposable index key changes; the captured JSON remains exact.
@@ -167,9 +167,9 @@ export class AssistantDeskDerivedIndex {
     // Keep SQL rollback, but avoid redundant durable checkpoints in an instance-owned file.
     this.db.exec(`
       PRAGMA cache_size = -8192;
-      PRAGMA temp_store = FILE;
+      PRAGMA temp_store = ${options.memory ? 'MEMORY' : 'FILE'};
       PRAGMA mmap_size = 0;
-      PRAGMA journal_mode = WAL;
+      PRAGMA journal_mode = ${options.memory ? 'MEMORY' : 'WAL'};
       PRAGMA synchronous = OFF;
       PRAGMA locking_mode = EXCLUSIVE;
       PRAGMA wal_autocheckpoint = 256;
@@ -390,6 +390,6 @@ export class AssistantDeskDerivedIndex {
     this.closed = true
     this.clearCaches()
     this.adapters.clear()
-    if (options.remove !== false) for (const suffix of ['', '-wal', '-shm']) rmSync(`${this.filename}${suffix}`, { force: true })
+    if (this.filename !== ':memory:' && options.remove !== false) for (const suffix of ['', '-wal', '-shm']) rmSync(`${this.filename}${suffix}`, { force: true })
   }
 }

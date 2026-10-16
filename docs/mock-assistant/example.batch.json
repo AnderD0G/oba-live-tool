@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "accountId": "default",
+  "metadataRevision": "fbb67495a5425323ba233b104f739f770b66830c79206b2499dab0b33c33763e",
+  "batchId": "sample-1",
+  "name": "模拟多语言评论",
+  "durationMs": 1000,
+  "users": [
+    {
+      "id": "mock-viewer-1",
+      "nickname": "模拟观众",
+      "payLevel": 15,
+      "followerCount": 100
+    }
+  ],
+  "events": [
+    {
+      "id": "mock-event-1",
+      "userId": "mock-viewer-1",
+      "atMs": 0,
+      "kind": "comment",
+      "text": "ราคาเท่าไหร่?"
+    }
+  ]
+}

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AssistantDeskCommand,
   AssistantDeskResult,
   AssistantDeskState,
 } from '../../shared/assistantDesk'
+import type { AssistantSourceExpectation } from '../../shared/mockAssistantControl'
 import type {
   PlatformLoginQrPreview,
   PlatformSessionCommand,
@@ -18,6 +19,7 @@ interface DeskError {
 }
 interface StoredDesk {
   accountId: string
+  sourceRevision: number
   state?: AssistantDeskState
   platform?: PlatformSessionState
   platformWarning?: string
@@ -25,13 +27,23 @@ interface StoredDesk {
   errors: DeskError[]
   pending: Record<string, number>
 }
-const initial = (accountId: string): StoredDesk => ({ accountId, errors: [], pending: {} })
+const initial = (accountId: string): StoredDesk => ({
+  accountId,
+  sourceRevision: 0,
+  errors: [],
+  pending: {},
+})
 const stale = (): AssistantDeskResult => ({
   ok: false,
   error: { code: 'ACCOUNT_CHANGED', message: '账号已切换，请重新操作' },
 })
+const sourceChanged = (): AssistantDeskResult => ({
+  ok: false,
+  error: { code: 'ASSISTANT_SOURCE_CHANGED', message: '数据来源已切换，请重新操作' },
+})
 const readActions = new Set([
   'state',
+  'storage-status',
   'context-get',
   'timeline',
   'audience',
@@ -40,6 +52,7 @@ const readActions = new Set([
   'segment-summary',
   'policy-fields',
   'policy-get',
+  'reply-policy-get',
   'policy-simulate',
   'attention-window',
   'message-batches',
@@ -52,12 +65,30 @@ export function useAssistantDesk(accountId: string) {
     owner.current = { accountId, generation: owner.current.generation + 1 }
   const generation = owner.current.generation
   const stateReadSerial = useRef(0)
+  const sourceEpoch = useRef(0)
+  const sourceIdentity = useRef<string | undefined>(undefined)
   const platformReadSerial = useRef(0)
   const platformMutations = useRef({ generation, pending: 0 })
   if (platformMutations.current.generation !== generation)
     platformMutations.current = { generation, pending: 0 }
   const [stored, setStored] = useState<StoredDesk>(() => initial(accountId))
   const data = stored.accountId === accountId ? stored : initial(accountId)
+  const sourceMode = data.state
+    ? data.state.provenance?.mode === 'mock'
+      ? 'mock'
+      : 'real'
+    : undefined
+  const sourceRunId =
+    data.state?.provenance?.mode === 'mock' ? data.state.provenance.runId : undefined
+  const expectedSource = useMemo<AssistantSourceExpectation | undefined>(
+    () =>
+      sourceMode === 'mock' && sourceRunId
+        ? { mode: 'mock', runId: sourceRunId }
+        : sourceMode === 'real'
+          ? { mode: 'real' }
+          : undefined,
+    [sourceMode, sourceRunId],
+  )
   const patch = useCallback(
     (fn: (current: StoredDesk) => StoredDesk) => {
       if (owner.current.accountId !== accountId || owner.current.generation !== generation) return
@@ -92,6 +123,7 @@ export function useAssistantDesk(accountId: string) {
     if (owner.current.accountId !== accountId || owner.current.generation !== generation)
       return stale()
     const serial = ++stateReadSerial.current
+    const epoch = sourceEpoch.current
     try {
       const response = await window.ipcRenderer.invoke('assistant-desk:request', {
         action: 'state',
@@ -99,9 +131,21 @@ export function useAssistantDesk(accountId: string) {
       })
       if (owner.current.accountId !== accountId || owner.current.generation !== generation)
         return stale()
-      if (response.ok && serial === stateReadSerial.current)
-        patch(current => ({ ...current, state: response.data as AssistantDeskState }))
-      else if (!response.ok && serial === stateReadSerial.current) reportError(response.error)
+      if (sourceEpoch.current !== epoch) return sourceChanged()
+      if (response.ok && serial === stateReadSerial.current) {
+        const state = response.data as AssistantDeskState
+        const identity = `${accountId}:${state.provenance?.mode === 'mock' ? `mock:${state.provenance.runId}` : 'real'}`
+        const changed = sourceIdentity.current !== undefined && sourceIdentity.current !== identity
+        sourceIdentity.current = identity
+        if (changed) sourceEpoch.current++
+        patch(current => ({
+          ...current,
+          state,
+          ...(changed
+            ? { sourceRevision: current.sourceRevision + 1, errors: [], pending: {} }
+            : {}),
+        }))
+      } else if (!response.ok && serial === stateReadSerial.current) reportError(response.error)
       return response
     } catch (error) {
       const failure = {
@@ -116,16 +160,24 @@ export function useAssistantDesk(accountId: string) {
     async (command: AssistantDeskCommand): Promise<AssistantDeskResult> => {
       if (command.params.accountId !== accountId || owner.current.generation !== generation)
         return stale()
+      if (!readActions.has(command.action) && !expectedSource) return sourceChanged()
+      const epoch = sourceEpoch.current
       pending(command.action, 1)
       try {
         if (command.action === 'state') return await readState()
-        const response = await window.ipcRenderer.invoke('assistant-desk:request', command)
+        const response = await window.ipcRenderer.invoke(
+          'assistant-desk:request',
+          command,
+          expectedSource,
+        )
         if (owner.current.accountId !== accountId || owner.current.generation !== generation)
           return stale()
+        if (sourceEpoch.current !== epoch) return sourceChanged()
         if (!response.ok) reportError(response.error)
         else if (!readActions.has(command.action)) await readState()
         return response
       } catch (error) {
+        if (sourceEpoch.current !== epoch) return sourceChanged()
         const failure = {
           code: 'DESK_UNAVAILABLE',
           message: error instanceof Error ? error.message : '助播服务暂不可用',
@@ -133,10 +185,10 @@ export function useAssistantDesk(accountId: string) {
         reportError(failure)
         return { ok: false, error: failure }
       } finally {
-        pending(command.action, -1)
+        if (sourceEpoch.current === epoch) pending(command.action, -1)
       }
     },
-    [accountId, generation, pending, readState, reportError],
+    [accountId, generation, pending, readState, reportError, expectedSource],
   )
   const requestPlatform = useCallback(
     async (command: PlatformSessionCommand, automatic = false): Promise<PlatformSessionResult> => {
@@ -144,8 +196,10 @@ export function useAssistantDesk(accountId: string) {
         return { ok: false, error: { code: 'SESSION_CHANGED', message: '账号已切换，请重新操作' } }
       const action = `platform:${command.action}`
       const serial = command.action === 'qr-preview' ? undefined : ++platformReadSerial.current
-      const mutation = !automatic && !['state', 'qr-preview'].includes(command.action)
-        ? platformMutations.current : undefined
+      const mutation =
+        !automatic && !['state', 'qr-preview'].includes(command.action)
+          ? platformMutations.current
+          : undefined
       if (mutation) mutation.pending++
       pending(action, 1)
       try {
@@ -154,11 +208,14 @@ export function useAssistantDesk(accountId: string) {
           return { ok: false, error: { code: 'SESSION_CHANGED', message: '已忽略旧账号响应' } }
         if (!response.ok) {
           if (serial === undefined || serial === platformReadSerial.current) {
-            if (automatic) patch(current => ({ ...current, platformWarning: '登录状态检查未响应，不代表采集中断；当前保留上次确认的状态。' }))
+            if (automatic)
+              patch(current => ({
+                ...current,
+                platformWarning: '登录状态检查未响应，不代表采集中断；当前保留上次确认的状态。',
+              }))
             else reportError(response.error)
           }
-        }
-        else if (command.action === 'qr-preview')
+        } else if (command.action === 'qr-preview')
           patch(current =>
             current.platform?.sessionId === command.sessionId &&
             current.platform.loginStatus !== 'authenticated'
@@ -186,7 +243,11 @@ export function useAssistantDesk(accountId: string) {
           message: error instanceof Error ? error.message : '登录会话暂不可用',
         }
         if (serial === undefined || serial === platformReadSerial.current) {
-          if (automatic) patch(current => ({ ...current, platformWarning: '登录状态检查未响应，不代表采集中断；当前保留上次确认的状态。' }))
+          if (automatic)
+            patch(current => ({
+              ...current,
+              platformWarning: '登录状态检查未响应，不代表采集中断；当前保留上次确认的状态。',
+            }))
           else reportError(failure)
         }
         return { ok: false, error: failure }
@@ -204,6 +265,18 @@ export function useAssistantDesk(accountId: string) {
   const refresh = useCallback(async () => {
     await Promise.all([readState(), platformRequest({ action: 'state', accountId })])
   }, [accountId, readState, platformRequest])
+  const resetSource = useCallback(() => {
+    sourceEpoch.current++
+    sourceIdentity.current = undefined
+    stateReadSerial.current++
+    patch(current => ({
+      ...current,
+      sourceRevision: current.sourceRevision + 1,
+      state: undefined,
+      errors: [],
+      pending: {},
+    }))
+  }, [patch])
   useEffect(() => {
     let disposed = false
     let dataInFlight = false
@@ -244,6 +317,6 @@ export function useAssistantDesk(accountId: string) {
   const busy = Object.entries(data.pending).some(
     ([action, count]) => count > 0 && action !== 'state' && action !== 'platform:state',
   )
-  return { ...data, accountId, request, platformRequest, refresh, dismissError, busy }
+  return { ...data, accountId, request, platformRequest, refresh, resetSource, dismissError, busy }
 }
 export type AssistantDeskController = ReturnType<typeof useAssistantDesk>
