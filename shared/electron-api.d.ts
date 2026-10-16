@@ -2,7 +2,9 @@ import type { LogMessage } from 'electron-log'
 import type { ProgressInfo, UpdateDownloadedEvent } from 'electron-updater'
 import type { AnalysisChanged, AnalysisCommand, AnalysisResponse } from './analysisRoom'
 import type { AssistantDeskCommand, AssistantDeskResult } from './assistantDesk'
+import type { AssistantSourceExpectation, MockAssistantCommand, MockAssistantControlResult } from './mockAssistantControl'
 import type { AssistantVoiceCommand, AssistantVoiceResult } from './assistantVoice'
+import type { AssistantBroadcastCommand, AssistantBroadcastResult } from './assistantBroadcast'
 import type { StudioMicHotkeyCommand, StudioMicHotkeyResult } from './studioMicHotkey'
 import type { XiaomiCameraCommand, XiaomiCameraResult } from './xiaomiCamera'
 import type { MobileAssistantAccessCommand, MobileAssistantAccessResult } from './mobileAssistantDesk'
@@ -27,7 +29,9 @@ import type { ObsEffectCommand, ObsEffectResponse } from './obsEffect'
 import type { SetupAction, SetupResult } from './setup'
 
 export interface IpcChannels {
-  [IPC_CHANNELS.assistantDesk.request]: (command:AssistantDeskCommand)=>Promise<AssistantDeskResult>
+  [IPC_CHANNELS.assistantBroadcast.request]: (command:AssistantBroadcastCommand)=>Promise<AssistantBroadcastResult>
+  [IPC_CHANNELS.mockAssistant.request]: (command:MockAssistantCommand)=>Promise<MockAssistantControlResult>
+  [IPC_CHANNELS.assistantDesk.request]: (command:AssistantDeskCommand, expectedSource?:AssistantSourceExpectation)=>Promise<AssistantDeskResult>
   [IPC_CHANNELS.assistantVoice.request]: (command:AssistantVoiceCommand)=>Promise<AssistantVoiceResult>
   [IPC_CHANNELS.studioMicHotkey.request]: (command:StudioMicHotkeyCommand)=>Promise<StudioMicHotkeyResult>
   [IPC_CHANNELS.xiaomiCamera.request]: (command:XiaomiCameraCommand)=>Promise<XiaomiCameraResult>

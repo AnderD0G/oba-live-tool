@@ -47,6 +47,29 @@ const browserExecutable = [
 const browserTest = (name: string, run: (t: TestContext) => Promise<void>) =>
   test(name, { skip: !browserExecutable && 'Playwright Chromium/Chrome is not installed' }, run)
 
+browserTest('phone labels simulated memory data and the real send target without offering mock import or playback', async t => {
+  const page = await ui(t, { ...snapshot, provenance: { mode: 'mock', runId: 'mock-run-1' }, mockReplyTarget: { ready: true, username: 'actual_host' } })
+  const banner = page.getByRole('status', { name: '模拟数据状态', exact: true })
+  await banner.getByText(/模拟数据.*仅内存/).waitFor()
+  assert.match(await banner.innerText(), /真实发送目标：@actual_host/)
+  assert.equal(await page.locator('input[type="file"]').count(), 0)
+  assert.equal(await page.getByRole('button', { name: '开始模拟', exact: true }).count(), 0)
+})
+
+browserTest('phone clears same-row reply drafts when a different mock run or real source is selected', async t => {
+  const first = { ...snapshot, provenance: { mode: 'mock', runId: 'mock-run-1' } }
+  const page = await ui(t, first)
+  await page.getByRole('button', { name: '任务', exact: true }).click()
+  const input = page.getByRole('textbox', { name: '中文回复草稿', exact: true })
+  await input.fill('仅属于模拟第一轮的草稿')
+  await page.evaluate(value => (window as any).fixture.update(value), { ...first, provenance: { mode: 'mock', runId: 'mock-run-2' } })
+  await page.waitForFunction(() => document.querySelector('textarea[aria-label="中文回复草稿"]')?.value === '')
+  await input.fill('仅属于模拟第二轮的草稿')
+  await page.evaluate(value => (window as any).fixture.update(value), snapshot)
+  await page.waitForFunction(() => document.querySelector('textarea[aria-label="中文回复草稿"]')?.value === '')
+  assert.equal(await page.getByRole('status', { name: '模拟数据状态', exact: true }).isHidden(), true)
+})
+
 test('mobile client allows only explicit fixed control commands and never retries after uncertain delivery', async () => {
   const calls: { url: string; body?: Record<string, unknown> }[] = []
   let failToggle = true

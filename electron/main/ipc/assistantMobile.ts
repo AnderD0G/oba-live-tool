@@ -12,6 +12,7 @@ import { registerAnalysisShutdown } from './analysisRoom'
 import { executeObsEffectCommand } from './obsEffect'
 import { getStudioMicHotkey } from './studioMicHotkey'
 import { executeXiaomiCameraCommand } from './xiaomiCamera'
+import { isMockAssistantSelected } from './mockAssistant'
 
 export function setupAssistantMobileIpc() {
   const diagnostics = createAssistantDiagnostics(join(app.getPath('userData'), 'logs'))
@@ -21,9 +22,9 @@ export function setupAssistantMobileIpc() {
       accountId,
       accountName,
       assetDirectory: join(app.getAppPath(), app.isPackaged ? 'dist' : 'public', 'assistant-mobile'),
-      execute: executeAssistantDeskCommand,
+      execute: command => executeAssistantDeskCommand(command, 'mobile'),
       voiceScene: executeAssistantVoiceScene,
-      trace: diagnostics.trace,
+      trace: event => { if (!isMockAssistantSelected(accountId)) diagnostics.trace(event) },
       voice: command => getAssistantVoice().execute(command),
       camera: command => executeObsEffectCommand(command.action === 'status'
         ? { action: 'camera-status' } : { action: 'camera-switch', target: command.target }),

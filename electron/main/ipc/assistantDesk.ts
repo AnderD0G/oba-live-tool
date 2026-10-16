@@ -20,6 +20,9 @@ import { requireAnalysisRoomReady, registerAnalysisShutdown } from './analysisRo
 import { assistantProviderModel, interpretAssistant, translateAssistantDraft } from './deepSeekAuto'
 import { dispatchAssistantLocalEffects,reserveEffectSequence } from './hooks'
 import { getObsEffectService, markCurrentObsCamera, markCurrentObsCameraFromShortcut, peekObsEffectOperationQueueState } from './obsEffect'
+import { executeMockDeskCommand, getMockRuntime, isMockAssistantSelected } from './mockAssistant'
+import { withAssistantSourceTransition } from '../services/mockAssistant/MockSourceBarrier'
+import { matchesAssistantSource, type AssistantSourceExpectation } from '../../../shared/mockAssistantControl'
 
 let service: AssistantDeskService | undefined
 let localTranslator: ChromeLocalTranslationService | undefined
@@ -135,13 +138,24 @@ export function getAssistantDesk() {
   }
   return service
 }
+export function translateLocalAssistant(input: { text: string; signal: AbortSignal }) {
+  getAssistantDesk()
+  return localTranslator!.translate(input)
+}
+export function localAssistantTranslationState() {
+  getAssistantDesk()
+  return localTranslator!.state()
+}
 let audienceEffectSync:((accountId:string)=>Promise<void>)|undefined
-export function executeAssistantVoiceScene(accountId: string, rowId: string) {
-  return getAssistantDesk().voiceScene(accountId, rowId)
+export async function executeAssistantVoiceScene(accountId: string, rowId: string) {
+  const desk = isMockAssistantSelected(accountId) ? await getMockRuntime().serviceFor(accountId) : getAssistantDesk()
+  return desk.voiceScene(accountId, rowId)
 }
 export function registerAudienceEffectSync(callback:(accountId:string)=>Promise<void>){audienceEffectSync=callback}
 export async function executeAssistantDeskCommand(
   input: AssistantDeskCommand,
+  origin: 'api' | 'desktop' | 'mobile' = 'api',
+  expectedSource?: AssistantSourceExpectation,
 ): Promise<AssistantDeskResult> {
   try {
     const command = validateDeskHttp('/assistant/command', input) as AssistantDeskCommand
@@ -151,6 +165,13 @@ export async function executeAssistantDeskCommand(
         ? { ok: true, data: result.recording }
         : { ok: false, error: { code: 'OBS_RECORDING_MARK_UNCONFIRMED', message: result.error } }
     }
+    const run = async (): Promise<AssistantDeskResult> => {
+    const reads = new Set(['state', 'storage-status', 'context-get', 'policy-fields', 'policy-get', 'reply-policy-get', 'policy-simulate', 'timeline', 'audience', 'sessions', 'segments', 'segment-summary', 'attention-window', 'message-batches', 'message-batch'])
+    if (origin === 'desktop' && ((!reads.has(command.action) && !expectedSource) || expectedSource &&
+      !matchesAssistantSource(expectedSource, isMockAssistantSelected(command.params.accountId)
+        ? getMockRuntime().status(command.params.accountId).runId ?? 'mock-empty' : undefined)))
+      return { ok: false, error: { code: 'ASSISTANT_SOURCE_CHANGED', message: '数据来源已切换，请刷新后重新操作' } }
+    if (isMockAssistantSelected(command.params.accountId)) return executeMockDeskCommand(command, origin)
     if (command.action === 'start') {
       const actualPlatform = accountManager.accountSessions
         .get(command.params.accountId)
@@ -170,6 +191,9 @@ export async function executeAssistantDeskCommand(
       data: { ...(result.data as AssistantDeskState), sourceAudit: sourceAudit?.snapshot(command.params.accountId), obsOperations: peekObsEffectOperationQueueState() },
     }
     return result
+    }
+    return ['start', 'context-save', 'policy-save', 'reply-policy-save'].includes(command.action)
+      ? await withAssistantSourceTransition(command.params.accountId, run) : await run()
   } catch (error) {
     return {
       ok: false,
@@ -182,8 +206,8 @@ export async function executeAssistantDeskCommand(
 }
 export function setupAssistantDeskIpc() {
   getAssistantDesk()
-  typedIpcMainHandle(IPC_CHANNELS.assistantDesk.request, (_event, command) =>
-    executeAssistantDeskCommand(command),
+  typedIpcMainHandle(IPC_CHANNELS.assistantDesk.request, (_event, command, expectedSource) =>
+    executeAssistantDeskCommand(command, 'desktop', expectedSource),
   )
   emitter.on('business-observation', observation => {
     getAssistantDesk().observeBusiness(observation)

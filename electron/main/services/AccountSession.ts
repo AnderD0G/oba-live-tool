@@ -43,6 +43,8 @@ import { readTikTokPageDiagnostics } from '../platforms/tiktok/pageDiagnostics'
 import { sameTikTokLivePage } from '../platforms/tiktok/livePageIdentity'
 import { CommentSubscriptionCoordinator } from './CommentSubscriptionCoordinator'
 import type { BrowserTranslationObservation } from '../../../shared/browserTranslation'
+import { matchesManualReplyTarget } from './mockAssistant/ManualReplyTarget'
+import type { PlatformLiveTarget } from '../../../shared/platformSession'
 
 export class AccountSession {
   readonly instanceId = randomUUID()
@@ -623,6 +625,28 @@ export class AccountSession {
         const snapshot = await platform.getPlatformSessionState(browser)
         if (!ready() || snapshot.loginStatus !== 'authenticated' || !snapshot.roomReady) return false
       }
+      return platform.performConfirmedComment(message, combinedSignal) as Promise<boolean>
+    })
+    this.replyTail = send.catch(() => false)
+    return send
+  }
+
+  /** Human-approved Mock reply: never acquires a real event listener to send. */
+  public async sendManualAssistantReply(message: string, signal: AbortSignal,
+    expected: { sessionId: string; target: PlatformLiveTarget }): Promise<boolean> {
+    const browser = this.browserSession, platform = this.platform, page = browser?.page
+    const lifecycle = this.replyLifecycle
+    const combinedSignal = AbortSignal.any([signal, lifecycle.signal])
+    const ready = () => !!browser && !!page && !page.isClosed() && this.browserSession === browser && browser.page === page &&
+      this.platform === platform && this.replyLifecycle === lifecycle && !combinedSignal.aborted &&
+      !this.platformSessionOperation && this.browserSessionId === expected.sessionId &&
+      sameTikTokLivePage(page.url(), expected.target.url)
+    const send = this.replyTail.then(async () => {
+      if (!ready() || !browser || !isLoginFirstPlatform(platform) ||
+          !('performConfirmedComment' in platform) || typeof platform.performConfirmedComment !== 'function') return false
+      const snapshot = await platform.getPlatformSessionState(browser)
+      if (!ready() || !matchesManualReplyTarget({ ...snapshot, sessionId: this.browserSessionId,
+        busy: !!this.platformSessionOperation }, expected)) return false
       return platform.performConfirmedComment(message, combinedSignal) as Promise<boolean>
     })
     this.replyTail = send.catch(() => false)

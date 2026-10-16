@@ -7,6 +7,8 @@ import type { VoiceMicRouter } from './VoiceMicRouter'
 type VoicePath = '/api/state' | '/api/rec/start' | '/api/rec/stop' | '/api/rec/cancel'
 interface VoiceOptions {
   state: (accountId: string, rowId: string) => Promise<Pick<AssistantDeskState, 'activeSession' | 'rows' | 'attention'>>
+  /** undefined delegates to viewer ownership; null rejects an obsolete independent draft. */
+  scope?: (accountId: string, rowId: string) => Promise<{ sessionId: string } | null | undefined>
   request?: (path: VoicePath, timeoutMs: number) => Promise<unknown>
   trace?: AssistantDiagnosticTrace
   micRouter?: Pick<VoiceMicRouter, 'acquire' | 'release' | 'state'>
@@ -100,6 +102,13 @@ export class AssistantVoiceCoordinator {
 
   private current(command: AssistantVoiceCommand, context: AssistantDiagnosticContext, stage: string, expectedSessionId?: string): Promise<string | AssistantVoiceResult> {
     return runAssistantDiagnosticStage(this.options.trace, context, stage, async () => {
+      const independent = await this.options.scope?.(command.accountId, command.rowId)
+      if (independent !== undefined) {
+        if (!independent?.sessionId || expectedSessionId && independent.sessionId !== expectedSessionId)
+          return failure(expectedSessionId ? 'VOICE_SESSION_CHANGED' : 'VOICE_ROW_NOT_FOUND')
+        context.sessionId = independent.sessionId
+        return independent.sessionId
+      }
       const state = await this.options.state(command.accountId, command.rowId)
       const session = state.activeSession
       if (!session || session.accountId !== command.accountId || session.status !== 'collecting') return failure(expectedSessionId ? 'VOICE_SESSION_CHANGED' : 'VOICE_NO_ACTIVE_SESSION')

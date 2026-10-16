@@ -1,5 +1,6 @@
 // Operator-authorized acceptance against real OBS. Never streams or starts platform collection.
-// node scripts/smoke-desktop-camera-recording.mjs ABS_EXECUTABLE ABS_PROFILE ABS_RECEIPT_DIRECTORY
+// node scripts/smoke-desktop-camera-recording.mjs [--preview-only] ABS_EXECUTABLE ABS_PROFILE ABS_RECEIPT_DIRECTORY
+// --preview-only checks local drafts and DOM stability with OBS disconnected; no live credentials are copied.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -8,10 +9,14 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { _electron as electron } from 'playwright'
 
-assert.equal(process.argv.length, 5)
-assert.ok(process.argv.slice(2).every(isAbsolute))
+const args = process.argv.slice(2)
+const previewOnly = args.includes('--preview-only')
+assert.ok(args.filter(value => value === '--preview-only').length <= 1)
+const paths = args.filter(value => value !== '--preview-only')
+assert.equal(paths.length, 3)
+assert.ok(paths.every(isAbsolute))
 const [executablePath, sourceProfile, receiptDirectory] = await Promise.all(
-  process.argv.slice(2).map(realpath),
+  paths.map(value => realpath(value)),
 )
 const profile = await mkdtemp(join(tmpdir(), 'oba-camera-recording-smoke-'))
 await chmod(profile, 0o700)
@@ -49,9 +54,34 @@ async function readUntil(predicate) {
   }
   assert.fail(`Recording state did not settle: ${JSON.stringify(state)}`)
 }
+async function stableComposer() {
+  await page.getByRole('heading', { name: '助播台', exact: true }).waitFor()
+  const workspace = page.locator('main.assistant-desk')
+  await workspace.getByRole('region', { name: '历史与片段复盘', exact: true }).waitFor()
+  const composer = workspace.locator(':scope > details[aria-label="自由发言"]')
+  // State is polled every two seconds. Observe more than two intervals so a
+  // duplicate sibling key cannot leave orphaned composers after reconciliation.
+  const until = Date.now() + 4500
+  do {
+    assert.equal(await workspace.count(), 1, 'Assistant desk must have exactly one mounted workspace')
+    assert.equal(await composer.count(), 1, 'State polling must preserve exactly one freeform composer')
+    assert.equal(await composer.locator(':scope > summary').count(), 1, 'Composer must have exactly one direct summary')
+    await pause(150)
+  } while (Date.now() < until)
+  return composer
+}
 try {
-  for (const name of ['obs-enter-effect.json', 'obs-camera.json'])
-    await writeFile(join(profile, name), await readFile(join(sourceProfile, name)), { mode: 0o600 })
+  if (previewOnly) {
+    // An empty profile would fall back to the live OBS port 4455. Override it
+    // explicitly instead, including during background UI initialization.
+    await writeFile(join(profile, 'obs-enter-effect.json'), JSON.stringify({
+      enabled: false, url: 'ws://127.0.0.1:1', password: '', sceneName: '', sourceName: '',
+      durationMs: 3000, minFansLevel: 0, effects: [],
+    }), { mode: 0o600 })
+  } else {
+    for (const name of ['obs-enter-effect.json', 'obs-camera.json'])
+      await writeFile(join(profile, name), await readFile(join(sourceProfile, name)), { mode: 0o600 })
+  }
   application = await electron.launch({
     executablePath,
     args: [`--user-data-dir=${profile}`],
@@ -68,6 +98,29 @@ try {
   page = await application.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   await page.waitForFunction(() => !!window.ipcRenderer?.invoke)
+  const composer = await stableComposer()
+  await composer.locator(':scope > summary').click()
+  await composer.getByRole('textbox', { name: '自由发言中文草稿' }).fill('自由发言本地预览：正在补货，请稍等。')
+  await composer.getByRole('textbox', { name: '自由发言发送预览' }).waitFor()
+  let broadcast
+  for (let index = 0; index < 40; index++) {
+    broadcast = await page.evaluate(() => window.ipcRenderer.invoke('assistant-broadcast:request', { action: 'state', accountId: 'default' }))
+    if (broadcast.ok && broadcast.data.chinese === '自由发言本地预览：正在补货，请稍等。') break
+    await pause(100)
+  }
+  assert.equal(broadcast.ok, true)
+  assert.equal(broadcast.data.finalText, '自由发言本地预览：正在补货，请稍等。')
+  assert.equal(broadcast.data.delivery.status, 'idle')
+  assert.equal(broadcast.data.useOriginal, true)
+  await page.evaluate(command => window.ipcRenderer.invoke('assistant-broadcast:request', command), { action: 'clear', accountId: 'default', draftId: broadcast.data.draftId, expectedRevision: broadcast.data.revision })
+  if (previewOnly) {
+    const receipt = { ok: true, previewOnly: true, ...appInfo, directory: undefined,
+      freeformDraftPreview: true, freeformSendClicked: false, uniqueComposerAcrossStatePolling: true,
+      obsConnection: 'disabled', obsCredentialsCopied: false, realRecordingStarted: false,
+      cameraSwitched: false, microphoneControlRequested: false, realPlatformCaptureStarted: false, publicSends: false }
+    await writeFile(join(receiptDirectory, 'product-preview-acceptance.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 })
+    console.log(JSON.stringify(receipt))
+  } else {
   const camera = await checked({ action: 'camera-status' })
   originalCamera = camera.cameraStatus.selected
   assert.ok(['iphone', 'android'].includes(originalCamera))
@@ -232,6 +285,8 @@ try {
     ...appInfo,
     directory: undefined,
     packagedDesktopButtons: true,
+    freeformDraftPreview: true,
+    freeformSendClicked: false,
     existingMarkerInterfaceReplaced: true,
     staleRangeRejected: true,
     authenticatedPhoneMark: true,
@@ -265,14 +320,15 @@ try {
       })),
     }),
   )
+  }
 } finally {
-  if (runId && page)
+  if (!previewOnly && runId && page)
     await invoke({ action: 'camera-recording-stop', runId, requestId: crypto.randomUUID() }).catch(
       () => {},
     )
-  if (page && originalCamera)
+  if (!previewOnly && page && originalCamera)
     await invoke({ action: 'camera-switch', target: originalCamera }).catch(() => {})
-  if (page && mobileStarted)
+  if (!previewOnly && page && mobileStarted)
     await page
       .evaluate(() =>
         window.ipcRenderer.invoke('assistant-mobile:request', {

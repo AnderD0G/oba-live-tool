@@ -21,6 +21,11 @@ let store:EffectGroupStore|undefined,service:EffectGroupService|undefined,client
 let sequence=0,registered=false
 let closing=false,shutdownPromise:Promise<void>|undefined
 export function nextEffectSequence(){return ++sequence}
+/** Copy configuration and acknowledged resources only; Mock runs never use this store as a sink. */
+export function snapshotMockEffectGroups(accountId:string){
+  getEffectGroupService()
+  return structuredClone({config:store!.get(accountId),resources:store!.listResources(accountId),installId:store!.installId})
+}
 export function getEffectGroupService(){
   if(closing)throw new EffectGroupError('EFFECT_GROUP_STOPPED','Effect groups are shutting down')
   if(service)return service

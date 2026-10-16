@@ -31,7 +31,9 @@ export interface AssistantDeskCaptureRun {
   roomId?: string
   recordingPaths?: string[]
 }
+export interface AssistantDeskProvenance { mode: 'mock'; runId: string }
 export interface AssistantDeskSession {
+  provenance?: AssistantDeskProvenance
   id: string
   accountId: string
   platform: string
@@ -69,6 +71,7 @@ export interface AssistantTranslationFallback {
   chinese: string
 }
 export interface AssistantDeskRow {
+  provenance?: AssistantDeskProvenance
   id: string
   sessionId: string
   accountId: string
@@ -191,8 +194,8 @@ export interface AssistantDeskBackupInfo {
   fileName: string; createdAt: number; recordCount: number; latestSequence: number; bytes: number; verified: true; method: 'online' | 'vacuum'
 }
 export interface AssistantDeskDatabaseStatus {
-  engine: 'sqlite'; schemaVersion: 1; authoritative: true; recordCount: number; latestSequence: number; migrationComplete: true; importedRecords: number; recoveryWarnings: number
-  backup: { intervalMs: number; retain: 7; last?: AssistantDeskBackupInfo; nextDueAt?: number; error?: string }
+  engine: 'sqlite' | 'memory'; volatile?: true; schemaVersion: 1; authoritative: true; recordCount: number; latestSequence: number; migrationComplete: true; importedRecords: number; recoveryWarnings: number
+  backup: { disabled?: true; intervalMs: number; retain: 7; last?: AssistantDeskBackupInfo; nextDueAt?: number; error?: string }
   mirrorWarning?: string
 }
 /** Current capture browser translation progress; original comments remain independent of this notice. */
@@ -257,6 +260,9 @@ export interface AssistantMessageBatchFilter {
   limit?: number
 }
 export interface AssistantDeskState {
+  /** Selected real destination for a human-approved simulated reply; never a worker capability. */
+  mockReplyTarget?: { ready: boolean; username?: string }
+  provenance?: AssistantDeskProvenance
   database?: AssistantDeskDatabaseStatus
   context: AssistantDeskContext
   audiencePolicy?: AssistantAudiencePolicy

@@ -18,7 +18,8 @@ import {
   type AssistantDeskState, type AssistantDeskPublicProfile, type AssistantMessageBatch, type AssistantMessageBatchFilter, type AssistantLocalTranslationHealth, type AssistantLocalTranslationResult,
 } from '../../../../shared/assistantDesk'
 import { tikTokRoomSnapshot } from '../../platforms/tiktok/presence'
-import { AssistantDeskJournal, type AssistantDeskJournalRecord } from './AssistantDeskJournal'
+import { AssistantDeskJournal, type AssistantDeskJournalRecord, type AssistantDeskJournalStorage } from './AssistantDeskJournal'
+import { MemoryAssistantDeskJournal } from './MemoryAssistantDeskJournal'
 import { MessageBatchIndex } from './MessageBatchIndex'
 import { AssistantDeskDerivedIndex, type DerivedMap, type DerivedSet } from './AssistantDeskDerivedIndex'
 import { AssistantTranslationError, captureTranslationFallback, classifyAiCommentTranslation, isLanguageLabelTranslation, normalizeTranslationLanguage, restoreTranslationFallback, validateStoredTranslation } from './translationQuality'
@@ -27,6 +28,16 @@ import { BrowserTranslationMatcher, localAbbreviations, type TranslationDecision
 import { BrowserTranslationHealth } from './BrowserTranslationHealth'
 import { nicknameReplyLanguage } from './replyLanguageHint'
 
+export interface AssistantDeskServiceOptions {
+  trace?: AssistantDiagnosticTrace
+  storage?: 'disk' | 'memory'
+  manualOnly?: boolean
+  provenance?: import('../../../../shared/assistantDesk').AssistantDeskProvenance
+}
+export interface MockAudienceSeed {
+  userId: string; nickname: string; payLevel?: number; fansClubLevel?: number; followerCount?: number
+  followingCount?: number; followStatus?: number; subscriptionActive?: true; manualCountry?: string
+}
 class DeskError extends Error { constructor(public code: string, message: string) { super(message) } }
 const LEGACY_INDEX_CAP_ERRORS = new Set(['用户身份索引达到上限', '用户身份索引已达上限', '事件索引达到上限，采集已停止保存', '事件索引已达上限', '礼物组索引已达上限'])
 const ATTENTION_KINDS = new Set<AssistantDeskRow['kind']>(['comment', 'enter', 'leave', 'follow', 'gift', 'like', 'event'])
@@ -102,7 +113,7 @@ interface RecordingOwnership { active: boolean; sessionIds: string[]; captureRun
 
 /** One main-process instance; no global live-comment listener and no legacy reply activation. */
 export class AssistantDeskService {
-  private journal: AssistantDeskJournal
+  private journal: AssistantDeskJournalStorage
   private derivedIndex: AssistantDeskDerivedIndex
   private ready: Promise<void>
   private commandTails = new Map<string, Promise<void>>()
@@ -168,6 +179,7 @@ export class AssistantDeskService {
   private sends = new Map<string, Promise<void>>()
   private sendControllers = new Set<AbortController>()
   private recordingOwners = new Map<string, RecordingOwnership>()
+  private freeformRequests = new Map<string, number>()
   private priorityBurst = 0
   private closed = false
   private accepting = true
@@ -175,6 +187,34 @@ export class AssistantDeskService {
   private healthError?: string
   private otherRecordedStorageError = false
   private now: () => number
+  /** Explicit operator translation; it creates neither a captured message nor a fake viewer. */
+  async translateFreeformDraft(accountIdRaw: string, input: { chinese: string; targetLanguage: string }, signal: AbortSignal): Promise<string> {
+    await this.ready
+    const accountId = id(accountIdRaw, '账号')
+    if (!this.accepting || this.closed || signal.aborted) fail('AI_INTERRUPTED', '自由发言翻译已取消')
+    const chinese = text(input.chinese, 1000, '中文草稿', false)
+    const targetLanguage = normalizeTranslationLanguage(input.targetLanguage)
+    if (!targetLanguage) fail('INVALID_COMMAND', '请选择有效的目标语言')
+    if (!this.deps.translateDraft) fail('AI_UNAVAILABLE', '翻译服务尚未就绪')
+    const context = this.context(accountId)
+    if (context.aiPaused || this.aiSuspensions.get(accountId)) fail('AI_PAUSED', 'AI已暂停')
+    const session = this.activeSession(accountId)
+    if (session) await this.reserveAiRequest(accountId, session.id)
+    else {
+      const used = this.freeformRequests.get(accountId) ?? 0
+      if (used >= context.aiRequestLimit) fail('AI_REQUEST_LIMIT', '自由发言翻译已达到本次应用运行的请求上限')
+      this.freeformRequests.set(accountId, used + 1)
+    }
+    if (!this.accepting || signal.aborted) fail('AI_INTERRUPTED', '自由发言翻译已取消')
+    const task = this.deps.translateDraft(accountId, { chinese, targetLanguage }, signal)
+    const completion = task.then(() => {}, () => {})
+    this.localTasks.add(completion)
+    try {
+      const result = await task
+      if (!this.accepting || signal.aborted) fail('AI_INTERRUPTED', '自由发言翻译已取消')
+      return text(result, 1000, '译文', false)
+    } finally { this.localTasks.delete(completion) }
+  }
   /** Ownership validation must not wait for storage status, audit exports or history projections. */
   async voiceScene(accountId: string, rowId: string): Promise<Pick<AssistantDeskState, 'activeSession' | 'rows' | 'attention'>> {
     await this.ready
@@ -192,10 +232,11 @@ export class AssistantDeskService {
     }
     return clone({ activeSession: session, rows: row?.accountId === accountId && row.sessionId === session.id ? [row] : [] })
   }
-  constructor(folder: string, private deps: AssistantDeskDependencies, private options: { trace?: AssistantDiagnosticTrace } = {}) {
+  constructor(folder: string, private deps: AssistantDeskDependencies, private options: AssistantDeskServiceOptions = {}) {
+    this.options = { ...options, ...(options.provenance ? { provenance: clone(options.provenance) } : {}) }
     this.now = deps.now ?? Date.now
-    this.journal = new AssistantDeskJournal(folder)
-    this.derivedIndex = new AssistantDeskDerivedIndex(folder)
+    this.journal = options.storage === 'memory' ? new MemoryAssistantDeskJournal() : new AssistantDeskJournal(folder)
+    this.derivedIndex = new AssistantDeskDerivedIndex(folder, { memory: options.storage === 'memory' })
     this.audiences = this.derivedIndex.map<AssistantDeskAudience>('audiences', 20000, { audience: true })
     this.identities = this.derivedIndex.map<string>('identities', 20000)
     this.countryTags = this.derivedIndex.map<AudienceCountryTagResult>('country-tags', 2000)
@@ -211,6 +252,46 @@ export class AssistantDeskService {
     this.timeBatchReads = this.derivedIndex.map('time-batch-reads', 200)
     this.ready = this.recover()
     void this.ready.catch(() => {})
+  }
+  /** The factory must opt into both volatile storage and immutable manual-send constraints. */
+  get mockRunId(): string | undefined {
+    return this.options.storage === 'memory' && this.options.manualOnly && this.options.provenance?.mode === 'mock' ? this.options.provenance.runId : undefined
+  }
+  /** Internal replay backpressure: each source event finishes ingest before admitting the next. */
+  async flushIngest(accountId: string): Promise<void> {
+    await this.ready
+    await this.ingestTails.get(accountId)
+    if (this.closed || !this.accepting) fail('MOCK_UNAVAILABLE', '模拟内存服务已关闭')
+    if (this.journal.dropped || this.activeSession(accountId)?.status === 'storage-error') fail('MOCK_PLAYBACK_FAILED', '模拟记录处理失败，播放已停止')
+  }
+  /** Seed explicit synthetic facts without inventing an enter/comment or contacting a platform. */
+  async seedMockAudience(accountIdRaw: string, users: MockAudienceSeed[]): Promise<void> {
+    await this.ready
+    const accountId = id(accountIdRaw, '账号')
+    if (!this.mockRunId || this.closed || !this.accepting) fail('MOCK_UNAVAILABLE', '模拟内存服务不可用')
+    if (this.activeSession(accountId)) fail('MOCK_RUNNING', '请先停止模拟，再准备观众资料')
+    if (!Array.isArray(users) || users.length > 1000) fail('MOCK_INVALID_BATCH', '模拟观众资料无效')
+    const validated = users.map(user => {
+      id(user.userId, '模拟用户ID'); text(user.nickname, 100, '模拟昵称', false)
+      for (const level of [user.payLevel, user.fansClubLevel]) if (level !== undefined && (known(level) === undefined || level > 10000)) fail('MOCK_INVALID_BATCH', '模拟等级范围无效')
+      for (const count of [user.followerCount, user.followingCount]) if (count !== undefined && known(count) === undefined) fail('MOCK_INVALID_BATCH', '模拟公开数量无效')
+      if (user.followStatus !== undefined && ![1, 2].includes(user.followStatus) || user.subscriptionActive !== undefined && user.subscriptionActive !== true || user.manualCountry !== undefined && !isCountryCode(user.manualCountry)) fail('MOCK_INVALID_BATCH', '模拟公开资料或国家无效')
+      return clone(user)
+    })
+    for (const user of validated) {
+      const now = this.now(), identity = JSON.stringify(['tiktok', user.userId]), uuid = this.identities.get(identity) ?? randomUUID()
+      const previous = this.audiences.get(this.audienceKey(accountId, uuid))
+      const profile = publicProfile(user)
+      const audience: AssistantDeskAudience = { ...(previous ?? { uuid, platform: 'tiktok', userId: user.userId, firstSeenAt: now, lastSeenAt: now, comments: 0, enters: 0, leaves: 0, follows: 0, finalGiftGroups: 0, knownGiftCoins: 0, unknownGiftGroups: 0 }),
+        accountIds: [accountId], nickname: cleanNickname(user.nickname) || '模拟观众', payLevel: knownLevel(user.payLevel), fansClubLevel: knownLevel(user.fansClubLevel), followerCount: knownFollowerCount(user.followerCount),
+        followerCountObservedAt: knownFollowerCount(user.followerCount) === undefined ? undefined : now, followerCountObservedOrder: knownFollowerCount(user.followerCount) === undefined ? undefined : this.derivedRows.size,
+        publicProfile: profile, publicProfileObservedAt: profile ? now : undefined, publicProfileObservedOrder: profile ? this.derivedRows.size : undefined }
+      await this.persist('audience', accountId, audience)
+      if (user.manualCountry !== undefined || this.countryTags.has(this.audienceKey(accountId, uuid))) {
+        const revision = (this.countryTags.get(this.audienceKey(accountId, uuid))?.revision ?? 0) + 1
+        await this.persist('audience-country-tag', accountId, { audienceUuid: uuid, revision, ...(user.manualCountry === undefined ? {} : { tag: { audienceUuid: uuid, countryCode: user.manualCountry, source: 'manual', revision, updatedAt: now } }) })
+      }
+    }
   }
   private diagnosticContext(action: string, accountId?: string, rowId?: string, requestId?: string): AssistantDiagnosticContext {
     const parent = currentAssistantDiagnostic()?.context
@@ -233,7 +314,7 @@ export class AssistantDeskService {
   private audiencePolicy(accountId: string) { return this.audiencePolicies.get(accountId) ?? defaultAudiencePolicy() }
   private replyPolicy(accountId: string) { return this.replyPolicies.get(accountId) ?? defaultAssistantReplyPolicy() }
   private validatedReplyPolicy(raw: unknown, revision: number) {
-    try { return validateAssistantReplyPolicy(raw, revision) } catch { fail('INVALID_REPLY_POLICY', '回复策略包含未知字段、重复标识或无效动作、模式、优先级，请核对后重试') }
+    try { const policy = validateAssistantReplyPolicy(raw, revision); return this.options.manualOnly ? { ...policy, rules: policy.rules.map(rule => rule.mode === 'auto' ? { ...rule, mode: 'review' as const } : rule) } : policy } catch { fail('INVALID_REPLY_POLICY', '回复策略包含未知字段、重复标识或无效动作、模式、优先级，请核对后重试') }
   }
   private async saveReplyPolicy(accountId: string, expectedRevision: unknown, raw: unknown) {
     const current = this.replyPolicy(accountId)
@@ -1506,7 +1587,7 @@ export class AssistantDeskService {
     const unresolved = [...heldRows, ...ordinaryRows].sort(compareAttention)
     const attention = { rows: unresolved, total, pinnedRowIds, archivedTotal: (this.attentionMembers.get(accountId)?.size ?? 0) - total - (pinnedRowIds.length - visibleHolds),
       window: this.attentionWindow(accountId) }
-    const snapshot: AssistantDeskState = { context, audiencePolicy: this.audiencePolicy(accountId), replyPolicy: this.replyPolicy(accountId), activeSession, attention, messageBatches: this.messageBatches.summary(accountId, activeSession?.id), sessions: visibleSessions, rows: (this.rows.get(accountId) ?? []).map(row => this.projectRow(row)), segments: visibleSegments, audience: this.derivedIndex.recentAudiences<AssistantDeskAudience>(accountId, 200).map(a => ({ ...this.projectAudience(accountId, a), linkedUuid: this.linkTarget(accountId, a.uuid) })), room: this.roomState(accountId), ai: { used, limit: context.aiRequestLimit, queued: this.queue.filter(j => j.accountId === accountId).length, running: [...this.running.values()].filter(j => j.accountId === accountId).length + [...this.draftTranslations.values()].filter(j => j.accountId === accountId).length, paused: pauseReason !== undefined, pauseReason }, health: { status: error ? 'error' : 'ok', error, pendingWrites: this.journal.pending + this.ingestPending, dropped: this.journal.dropped, recoveryWarnings: this.journal.recoveryWarnings } }
+    const snapshot: AssistantDeskState = { ...(this.options.provenance ? { provenance: clone(this.options.provenance) } : {}), context, audiencePolicy: this.audiencePolicy(accountId), replyPolicy: this.replyPolicy(accountId), activeSession, attention, messageBatches: this.messageBatches.summary(accountId, activeSession?.id), sessions: visibleSessions, rows: (this.rows.get(accountId) ?? []).map(row => this.projectRow(row)), segments: visibleSegments, audience: this.derivedIndex.recentAudiences<AssistantDeskAudience>(accountId, 200).map(a => ({ ...this.projectAudience(accountId, a), linkedUuid: this.linkTarget(accountId, a.uuid) })), room: this.roomState(accountId), ai: { used, limit: context.aiRequestLimit, queued: this.queue.filter(j => j.accountId === accountId).length, running: [...this.running.values()].filter(j => j.accountId === accountId).length + [...this.draftTranslations.values()].filter(j => j.accountId === accountId).length, paused: pauseReason !== undefined, pauseReason }, health: { status: error ? 'error' : 'ok', error, pendingWrites: this.journal.pending + this.ingestPending, dropped: this.journal.dropped, recoveryWarnings: this.journal.recoveryWarnings } }
     snapshot.browserTranslationHealth = this.translationHealth(accountId)?.state() ?? { status: 'inactive', checkedAt: this.now(), untranslatedCount: 0 }
     snapshot.localTranslationHealth = this.localTranslationHealth()
     snapshot.currentMarker = currentMarker
@@ -1534,7 +1615,7 @@ export class AssistantDeskService {
     if (!Number.isInteger(raw.aiRequestLimit) || raw.aiRequestLimit < 0 || raw.aiRequestLimit > 1000 || !Number.isInteger(raw.goldLevel) || raw.goldLevel < 1 || raw.goldLevel > 100) fail('INVALID_CONTEXT', 'AI上限须为0～1000，金框等级须为1～100')
     const attentionMaxAgeSeconds = raw.attentionMaxAgeSeconds === undefined ? current.attentionMaxAgeSeconds ?? 600 : raw.attentionMaxAgeSeconds
     if (!Number.isInteger(attentionMaxAgeSeconds) || attentionMaxAgeSeconds < 30 || attentionMaxAgeSeconds > 86400) fail('INVALID_CONTEXT', '待处理有效期须为30～86400秒')
-    return { revision: current.revision + 1, knowledge: text(raw.knowledge, 20000, '知识库'), instructions: text(raw.instructions, 20000, '回复要求'), replyMode: raw.replyMode, translationEnabled: raw.translationEnabled, translationMode: raw.translationMode ?? 'ai', aiRequestLimit: raw.aiRequestLimit, goldLevel: raw.goldLevel, priorityGold: raw.priorityGold, aiPaused: raw.aiPaused ?? false, localEffectsEnabled: raw.localEffectsEnabled ?? false, attentionMaxAgeSeconds }
+    return { revision: current.revision + 1, knowledge: text(raw.knowledge, 20000, '知识库'), instructions: text(raw.instructions, 20000, '回复要求'), replyMode: this.options.manualOnly && raw.replyMode === 'auto' ? 'review' : raw.replyMode, translationEnabled: raw.translationEnabled, translationMode: raw.translationMode ?? 'ai', aiRequestLimit: raw.aiRequestLimit, goldLevel: raw.goldLevel, priorityGold: raw.priorityGold, aiPaused: raw.aiPaused ?? false, localEffectsEnabled: raw.localEffectsEnabled ?? false, attentionMaxAgeSeconds }
   }
   private async saveContext(accountId: string, expectedRevision: unknown, raw: any) {
     const previous = this.context(accountId)
@@ -1575,7 +1656,7 @@ export class AssistantDeskService {
     if (this.sessions.size >= 10000) fail('SESSION_LIMIT', '场次索引达到上限；请备份后换目录')
     const chosen = platform === undefined ? 'tiktok' : id(platform, '平台')
     // Each explicit start after stop/restart defines a new operator scene, independently of TikTok's broadcast.
-    const session: AssistantDeskSession = { id: randomUUID(), accountId, platform: chosen, startedAt: this.now(), status: 'collecting', aiRequests: 0 }
+    const session: AssistantDeskSession = { ...(this.options.provenance ? { provenance: clone(this.options.provenance) } : {}), id: randomUUID(), accountId, platform: chosen, startedAt: this.now(), status: 'collecting', aiRequests: 0 }
     await this.persist('session', accountId, session)
     this.active.set(accountId, session.id)
     this.localCaptureGenerations.delete(accountId)
@@ -1733,7 +1814,7 @@ export class AssistantDeskService {
     const followerCountObservedOrder = followerCount === undefined ? undefined : eventFollowerCount === undefined ? audience?.followerCountObservedOrder : this.derivedRows.size + 1
     const eventProfile = publicProfile(raw.public_profile)
     const profile = eventProfile ? { ...audience?.publicProfile, ...eventProfile } : publicProfile(audience?.publicProfile)
-    const row: AssistantDeskRow = { id: randomUUID(), sessionId, accountId, platform: session.platform, receivedAt, sourceEventId, userId, audienceUuid: audience?.uuid, nickname, mentionHandle: usableHandle, mentionWarning: usableHandle ? '文本@提及，不代表平台真实mention ID' : '没有可验证的唯一@账号；将使用昵称文本，可能不能唯一定位用户', kind, original: typeof raw.content === 'string' ? raw.content.slice(0, 8000) : '', payLevel, fansClubLevel, levelSource: { payLevel: payLevel === undefined ? undefined : eventPayLevel === undefined ? 'prior-observed' : 'event', fansClubLevel: fansClubLevel === undefined ? undefined : eventFansLevel === undefined ? 'prior-observed' : 'event' }, followerCount, followerCountSource, followerCountObservedAt, followerCountObservedOrder, translation: { status: wantsTranslation ? 'pending' : 'skipped' }, reply: { status: 'none' } }
+    const row: AssistantDeskRow = { ...(this.options.provenance ? { provenance: clone(this.options.provenance) } : {}), id: randomUUID(), sessionId, accountId, platform: session.platform, receivedAt, sourceEventId, userId, audienceUuid: audience?.uuid, nickname, mentionHandle: usableHandle, mentionWarning: usableHandle ? '文本@提及，不代表平台真实mention ID' : '没有可验证的唯一@账号；将使用昵称文本，可能不能唯一定位用户', kind, original: typeof raw.content === 'string' ? raw.content.slice(0, 8000) : '', payLevel, fansClubLevel, levelSource: { payLevel: payLevel === undefined ? undefined : eventPayLevel === undefined ? 'prior-observed' : 'event', fansClubLevel: fansClubLevel === undefined ? undefined : eventFansLevel === undefined ? 'prior-observed' : 'event' }, followerCount, followerCountSource, followerCountObservedAt, followerCountObservedOrder, translation: { status: wantsTranslation ? 'pending' : 'skipped' }, reply: { status: 'none' } }
     if (kind === 'like' && known(raw.like_count) !== undefined) row.likeCount = known(raw.like_count)
     if (profile) { row.publicProfile = profile; row.publicProfileSource = eventProfile ? 'event' : 'prior-observed'; row.publicProfileObservedAt = eventProfile ? receivedAt : audience?.publicProfileObservedAt; row.publicProfileObservedOrder = eventProfile ? this.derivedRows.size + 1 : audience?.publicProfileObservedOrder }
     if (kind === 'comment') {
@@ -1748,7 +1829,7 @@ export class AssistantDeskService {
       const count = known(raw.repeat_count)
       const unitCoins = known(raw.gift_unit_coins)
       const computed = unitCoins !== undefined && count !== undefined ? unitCoins * count : undefined
-      const totalCoins = known(computed)
+      const totalCoins = known(computed) ?? (this.mockRunId ? known(raw.mock_gift_total_coins) : undefined)
       const final = raw.repeat_end === true || (known(raw.gift_type) !== undefined && raw.gift_type !== 1)
       row.gift = { roomId: optionalId(raw.room_id), id: optionalId(raw.gift_id), name: typeof raw.gift_name === 'string' ? raw.gift_name.slice(0, 200) : undefined, groupId: optionalId(raw.group_id), count, final, contributed: false, unitCoins, totalCoins }
       const key = this.giftKey(row)
@@ -1980,7 +2061,7 @@ export class AssistantDeskService {
   private enqueue(row: AssistantDeskRow, selected?: AssistantReplyRule, manualReply = false) {
     const context = clone(this.context(row.accountId))
     const replyRule = selected ? clone(selected) : this.automaticReplyRule(row)
-    context.replyMode = replyRule ? !manualReply && replyRule.mode === 'auto' ? 'auto' : 'review' : 'off'
+    context.replyMode = replyRule ? !this.options.manualOnly && !manualReply && replyRule.mode === 'auto' ? 'auto' : 'review' : 'off'
     if (replyRule) { context.knowledge = replyRule.knowledge; context.instructions = replyRule.instructions }
     else { context.knowledge = ''; context.instructions = '' }
     if (row.kind !== 'comment' || row.translation.status === 'ready' || ['browser', 'local'].includes(context.translationMode ?? 'ai')) context.translationEnabled = false
@@ -2055,7 +2136,7 @@ export class AssistantDeskService {
       row = { ...row, translation: quality ?? { ...row.translation, ...(!row.translation.language && replyLanguage ? { language: replyLanguage } : {}) }, reply: { ...row.reply, ...(targetLanguage ? { targetLanguage } : {}), status: job.context.replyMode === 'off' || !reply ? 'none' : 'review', text: job.context.replyMode === 'off' ? undefined : reply, chinese: job.context.replyMode === 'off' ? undefined : typeof output.replyChinese === 'string' ? output.replyChinese.slice(0, 8000) : undefined }, ai: { ...row.ai!, completedAt: this.now(), needsReview, evidence } }
       await this.persist('row', job.accountId, row, () => this.valid(job), false, true)
       if (!job.replyRule) await this.admitReplyAfterEnrichment(job.accountId, row.id)
-      if (job.context.replyMode === 'auto' && !job.manualReply && reply && !needsReview && this.valid(job)) await this.sendRow(row, job)
+      if (!this.options.manualOnly && job.context.replyMode === 'auto' && !job.manualReply && reply && !needsReview && this.valid(job)) await this.sendRow(row, job)
     } catch (error) {
       if (!timedOut && !this.valid(job)) return
       if (timedOut && ((this.generation.get(job.accountId) ?? 0) !== job.generation || this.active.get(job.accountId) !== job.sessionId)) return
@@ -2116,6 +2197,7 @@ export class AssistantDeskService {
     await next
   }
   private async sendRow(input: AssistantDeskRow, job?: AiJob, requestId?: string) {
+    if (this.options.manualOnly && job) return
     await this.serializeSend(input.accountId, async () => {
       if (job && !this.valid(job)) return
       if (!this.accepting) fail('SEND_INTERRUPTED', '回复发送已取消')

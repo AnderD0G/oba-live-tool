@@ -1,9 +1,22 @@
 import { appendFile, lstat, mkdir, open, readdir, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import type { AssistantDeskDatabaseStatus as StorageStatus } from '../../../../shared/assistantDesk'
 import { AssistantDeskDatabase, type AssistantDeskDatabaseOptions, type AssistantDeskDatabaseStatus } from './AssistantDeskDatabase'
 
 export interface AssistantDeskJournalRecord { type: string; accountId: string; at: number; data: unknown }
 export interface AssistantDeskJournalFilter { type?: string; accountId?: string }
+export interface AssistantDeskJournalStorage {
+  pending: number; dropped: number; recoveryWarnings: number; error?: string
+  initialize(): Promise<void>
+  append(record: AssistantDeskJournalRecord, guard?: () => boolean): Promise<void>
+  read(reverse?: boolean, filter?: AssistantDeskJournalFilter): AsyncGenerator<AssistantDeskJournalRecord>
+  latest(type: string, accountId: string, entityId: string): Promise<AssistantDeskJournalRecord | undefined>
+  metadata(value: unknown): Promise<void>
+  status(): Promise<StorageStatus>
+  backup(): Promise<unknown>
+  flush(): Promise<void>
+  close(): Promise<void>
+}
 const FILE = /^\d{12}\.jsonl$/
 const SHARD_BYTES = 1024 * 1024
 const MAX_RECORD_BYTES = 128 * 1024

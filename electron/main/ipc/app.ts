@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell } from 'electron'
+import { revokeMockWorkerAccess } from './mockAssistant'
 import { IPC_CHANNELS } from 'shared/ipcChannels'
 import { accountManager } from '#/managers/AccountManager'
 import { providerService } from '#/services/ProviderService'
@@ -28,7 +29,8 @@ function setupIpcHandlers() {
     return providerService.providers
   })
 
-  typedIpcMainHandle(IPC_CHANNELS.account.switch, (_, { account }) => {
+  typedIpcMainHandle(IPC_CHANNELS.account.switch, async (_, { account }) => {
+    await revokeMockWorkerAccess()
     accountManager.setAccountName(account.id, account.name)
   })
 }

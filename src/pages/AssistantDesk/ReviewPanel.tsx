@@ -242,18 +242,28 @@ export function AssistantAudienceTable({
   )
 }
 
-export function ReviewPanel({
-  accountId,
-  state,
-  busy,
-  request,
-}: {
+type ReviewPanelProps = {
   accountId: string
   state: AssistantDeskState
   busy: boolean
   markPending?: boolean
   request: DeskRequest
-}) {
+}
+
+export function ReviewPanel(props: ReviewPanelProps) {
+  const sourceKey = props.state.provenance?.mode === 'mock'
+    ? `mock:${props.state.provenance.runId}`
+    : 'real'
+  // A new source/run must never reuse the previous query, cursor or recording notice.
+  return <ReviewPanelSource key={`${props.accountId}:${sourceKey}`} {...props} />
+}
+
+function ReviewPanelSource({
+  accountId,
+  state,
+  busy,
+  request,
+}: ReviewPanelProps) {
   const emptyFilter = (): HistoryFilterDraft => ({
     sessionId: '',
     audienceUuid: '',
@@ -364,16 +374,16 @@ export function ReviewPanel({
   )
   const segmentGroups = groupSegmentsByCapture(state.sessions, segments, accountId)
   return (
-    <section className="assistant-panel assistant-review" aria-label="历史与片段复盘">
+    <section className="assistant-panel assistant-review" aria-label={state.provenance?.mode === 'mock' ? '模拟历史与片段复盘（仅内存）' : '历史与片段复盘'}>
       <div className="assistant-section-heading">
         <div>
-          <span className="assistant-step">04 · 留下证据</span>
+          <span className="assistant-step">{state.provenance?.mode === 'mock' ? '04 · 模拟历史' : '04 · 留下证据'}</span>
           <h2>
             <Bookmark size={18} />
-            历史录像与复盘
+            {state.provenance?.mode === 'mock' ? '模拟历史与复盘 · 仅内存' : '历史录像与复盘'}
           </h2>
         </div>
-        <span className="assistant-muted">稳定 UUID · 跨场次记录</span>
+        <span className="assistant-muted">{state.provenance?.mode === 'mock' ? '清空或退出应用后消失' : '稳定 UUID · 跨场次记录'}</span>
       </div>
       <div className="assistant-review-tools">
         <div className="assistant-mark-block">

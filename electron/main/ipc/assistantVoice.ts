@@ -7,6 +7,8 @@ import { typedIpcMainHandle } from '../utils/ipc'
 import { executeAssistantVoiceScene } from './assistantDesk'
 import { registerAnalysisShutdown } from './analysisRoom'
 import { getVoiceMicRouter } from './studioMicHotkey'
+import { isMockAssistantSelected } from './mockAssistant'
+import { resolveAssistantBroadcastVoiceScope } from './assistantBroadcast'
 
 let voice: AssistantVoiceCoordinator | undefined
 let diagnostics: ReturnType<typeof createAssistantDiagnostics> | undefined
@@ -15,7 +17,8 @@ let diagnostics: ReturnType<typeof createAssistantDiagnostics> | undefined
 export function getAssistantVoice(): AssistantVoiceCoordinator {
   if (!voice) {
     diagnostics ??= createAssistantDiagnostics(join(app.getPath('userData'), 'logs'))
-    voice = new AssistantVoiceCoordinator({ state: executeAssistantVoiceScene, trace: diagnostics.trace, micRouter: getVoiceMicRouter() })
+    voice = new AssistantVoiceCoordinator({ state: executeAssistantVoiceScene, scope: resolveAssistantBroadcastVoiceScope,
+      trace: event => { if (!event.accountId || !isMockAssistantSelected(event.accountId)) diagnostics!.trace(event) }, micRouter: getVoiceMicRouter() })
   }
   return voice
 }

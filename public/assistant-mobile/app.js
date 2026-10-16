@@ -344,6 +344,10 @@ export function mountMobileDesk() {
   const connection = element('span', 'connection', '连接中')
   const account = element('span', 'account', '等待电脑端状态')
   status.append(connection, account)
+  const mockBanner = element('div', 'mock-status')
+  mockBanner.setAttribute('role', 'status')
+  mockBanner.setAttribute('aria-label', '模拟数据状态')
+  mockBanner.hidden = true
   const metrics = element('div', 'metrics')
   const online = element('div', 'metric')
   const onlineValue = element('strong', '', '—')
@@ -355,7 +359,7 @@ export function mountMobileDesk() {
   const captureValue = element('strong', '', '等待状态')
   capture.append(element('span', '', '采集状态'), captureValue)
   metrics.append(online, tasksMetric, capture)
-  header.append(brand, status, metrics)
+  header.append(brand, status, mockBanner, metrics)
 
   const controls = element('details', 'live-controls')
   controls.append(element('summary', '', '机位与麦克风'))
@@ -566,6 +570,17 @@ export function mountMobileDesk() {
   }
   const client = createMobileClient({
     onSnapshot(value) {
+      const changedSource = snapshot && (snapshot.accountId !== value.accountId ||
+        (snapshot.provenance?.mode === 'mock' ? snapshot.provenance.runId : 'real') !==
+        (value.provenance?.mode === 'mock' ? value.provenance.runId : 'real'))
+      if (changedSource) {
+        for (const memory of [drafts, chineseDrafts, languageDrafts, transcripts, retryIds]) memory.clear()
+        retranslationInFlight.clear()
+        for (const mode of ['live', 'tasks']) {
+          for (const card of cards[mode].values()) card.node.remove()
+          cards[mode].clear()
+        }
+      }
       snapshot = value
       receivedAt = Date.now()
       if (loadedAccount !== value.accountId) {
@@ -581,7 +596,7 @@ export function mountMobileDesk() {
       }
       if (!notice.hidden && notice.dataset.connection === 'true') { notice.hidden = true; delete notice.dataset.connection }
       render()
-      if (voiceSession && !voiceSession.cleanupRequested && (voiceSession.accountId !== value.accountId || voiceSession.sessionId !== value.sessionId || !value.collecting || !value.tasks.some(row => row.id === voiceSession.rowId))) {
+      if (voiceSession && !voiceSession.cleanupRequested && (changedSource || voiceSession.accountId !== value.accountId || voiceSession.sessionId !== value.sessionId || !value.collecting || !value.tasks.some(row => row.id === voiceSession.rowId))) {
         voiceSession.cleanupRequested = true
         voiceSession.cancelRequested = true
         queueMicrotask(() => void cancelVoice())
@@ -866,6 +881,9 @@ export function mountMobileDesk() {
     connection.classList.toggle('connected', connected)
     connection.classList.toggle('offline', !connected && Boolean(snapshot))
     account.textContent = snapshot?.accountName || '等待电脑端状态'
+    const simulated = snapshot?.provenance?.mode === 'mock'
+    mockBanner.hidden = !simulated
+    mockBanner.textContent = simulated ? `模拟数据 · 仅内存，清空或退出应用后消失；回复仅手动发送。${snapshot.mockReplyTarget?.ready && snapshot.mockReplyTarget.username ? `真实发送目标：@${snapshot.mockReplyTarget.username}` : '未选择真实直播间'}` : ''
     onlineValue.textContent = typeof snapshot?.room?.onlineCount === 'number' ? snapshot.room.onlineCount.toLocaleString('zh-CN') : '—'
     onlineValue.classList.toggle('stale-value', snapshot?.room?.status !== 'fresh')
     online.title = snapshot?.room?.status === 'stale' ? '人数为上次观测值' : '平台已观测的在线人数'
@@ -874,7 +892,7 @@ export function mountMobileDesk() {
     taskBadge.hidden = !snapshot?.totalTasks
     const captureActive = snapshot?.captureActive ?? snapshot?.collecting
     const storageError = snapshot?.captureStatus === 'storage-error'
-    captureValue.textContent = snapshot ? captureActive ? storageError ? '采集中·保存异常' : '采集中' : '已停止' : '等待状态'
+    captureValue.textContent = snapshot ? simulated ? captureActive ? '模拟中 · 仅内存' : '模拟已停止' : captureActive ? storageError ? '采集中·保存异常' : '采集中' : '已停止' : '等待状态'
     captureValue.title = captureValue.textContent
     captureValue.classList.toggle('collecting', Boolean(captureActive))
     capture.classList.toggle('has-error', storageError)

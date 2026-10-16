@@ -33,6 +33,8 @@ export interface MobileAssistantCameraState {
 export type MobileStudioMicCommand = { action: 'status' | 'toggle' | 'align-open' | 'mute' | 'unmute' }
 
 export interface MobileAssistantDeskSnapshot {
+  provenance?: AssistantDeskState['provenance']
+  mockReplyTarget?: AssistantDeskState['mockReplyTarget']
   accountId: string
   accountName: string
   serverNow: number

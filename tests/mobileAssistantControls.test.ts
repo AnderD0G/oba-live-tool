@@ -66,6 +66,20 @@ function state(collecting = true): AssistantDeskState {
     health: { status: 'ok', pendingWrites: 0, dropped: 0, recoveryWarnings: 0 },
   } as AssistantDeskState
 }
+
+test('phone snapshots identify the selected memory simulation and its real manual-send target without projecting extra configuration', () => {
+  const value = state()
+  value.provenance = { mode: 'mock', runId: 'mock-run-1' }
+  value.mockReplyTarget = { ready: true, username: 'actual_host' }
+  const snapshot = projectMobileAssistantState(value, 'default', 'Test', 1000)
+  assert.deepEqual(snapshot.provenance, { mode: 'mock', runId: 'mock-run-1' })
+  assert.deepEqual(snapshot.mockReplyTarget, { ready: true, username: 'actual_host' })
+  delete value.provenance
+  delete value.mockReplyTarget
+  const real = projectMobileAssistantState(value, 'default', 'Test', 1000)
+  assert.equal(real.provenance, undefined)
+  assert.equal(real.mockReplyTarget, undefined)
+})
 async function fixture(t: TestContext, collecting = true, apiMic = false) {
   let current = state(collecting)
   const commands: AssistantDeskCommand[] = []
