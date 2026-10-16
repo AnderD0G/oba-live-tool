@@ -45,3 +45,13 @@ coverage/
 /vendor-build/
 /scripts/print-one-test-label.cjs
 /scripts/print-large-test-label.cjs
+
+# Local interactive-director smoke artifacts
+/work/director-check/
+
+# Generated standalone deployment outputs and private local deployment configuration.
+/dist-server/
+/dist-host-bridge/
+/artifacts/
+/.env.*
+/deploy/**/*.local.env

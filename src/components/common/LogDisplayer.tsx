@@ -27,10 +27,17 @@ interface ParsedLog {
 const MAX_LOG_MESSAGES = 200 // 仅展示最近的 200 条日志
 
 export default function LogDisplayer() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('oba.logPanel.collapsed') !== 'false' }
+    catch { return true }
+  })
   const [logMessages, setLogMessages] = useState<ParsedLog[]>([])
   const [autoScroll, setAutoScroll] = useState(true)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    try { localStorage.setItem('oba.logPanel.collapsed', String(collapsed)) } catch {}
+  }, [collapsed])
 
   const scrollToBottom = useCallback(() => {
     if (viewportRef.current && autoScroll) {
@@ -40,6 +47,10 @@ export default function LogDisplayer() {
       })
     }
   }, [autoScroll])
+
+  useEffect(() => {
+    if (!collapsed) scrollToBottom()
+  }, [collapsed, scrollToBottom])
 
   const parseLogMessage = (log: LogMessage): ParsedLog | null => {
     if (!log.data || log.data.length === 0) {
@@ -87,7 +98,7 @@ export default function LogDisplayer() {
   const autoScrollId = useId()
 
   return (
-    <div className="h-full flex flex-col bg-background">
+    <div className={cn('flex flex-col bg-background shrink-0', collapsed ? 'h-[48px]' : 'h-[180px]')}>
       {/* 日志头部 */}
       <div className="flex items-center justify-between px-4 py-2 border-b">
         <div className="flex items-center gap-2">
@@ -95,8 +106,16 @@ export default function LogDisplayer() {
           <span className="text-xs text-muted-foreground">{logMessages.length} 条记录</span>
         </div>
         <div className="flex items-center gap-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed(value => !value)}
+          >
+            {collapsed ? '展开日志' : '最小化日志'}
+          </Button>
           {/* 自动滚动开关 */}
-          <div className="flex items-center gap-2">
+          <div className={cn('flex items-center gap-2', collapsed && 'hidden')}>
             <Switch id={autoScrollId} checked={autoScroll} onCheckedChange={setAutoScroll} />
             <label
               htmlFor={autoScrollId}
@@ -112,7 +131,7 @@ export default function LogDisplayer() {
               setLogMessages([])
               scrollToBottom()
             }}
-            className="text-xs h-7 px-2 text-muted-foreground hover:text-destructive"
+            className={cn('text-xs h-7 px-2 text-muted-foreground hover:text-destructive', collapsed && 'hidden')}
           >
             清空
           </Button>
@@ -120,7 +139,7 @@ export default function LogDisplayer() {
       </div>
 
       {/* 日志内容 */}
-      <ScrollArea ref={scrollAreaRef} className="flex-1">
+      <ScrollArea ref={scrollAreaRef} className={cn('flex-1', collapsed && 'hidden')}>
         <div className="p-4 font-mono text-sm">
           {logMessages.map((log, index) => (
             <LogItem key={log.id} log={log} index={index} />

@@ -12,10 +12,11 @@ import {
 } from '@/components/ui/context-menu'
 import { Toaster } from '@/components/ui/toaster'
 import { useDevMode } from '@/hooks/useDevMode'
+import { EVENTS, eventEmitter } from '@/utils/events'
 import { Header } from './components/common/Header'
 import { useIpcListener } from './hooks/useIpc'
 import './App.css'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { UpdateDialog } from './components/update/UpdateDialog'
 import { useAccounts } from './hooks/useAccounts'
 import { useAutoMessageStore } from './hooks/useAutoMessage'
@@ -28,6 +29,13 @@ import { useToast } from './hooks/useToast'
 import { useUpdateConfigStore, useUpdateStore } from './hooks/useUpdate'
 
 function useGlobalIpcListener() {
+  useEffect(
+    () =>
+      eventEmitter.on(EVENTS.ACCOUNT_SWITCHED, () => {
+        void window.ipcRenderer.invoke(IPC_CHANNELS.director.request, { action: 'stop' })
+      }),
+    [],
+  )
   useIpcListener(IPC_CHANNELS.codexAuto.changed, state =>
     useCodexAutoStore.getState().update(state),
   )
@@ -89,12 +97,21 @@ function useGlobalIpcListener() {
 function App() {
   const navigate = useNavigate()
   useEffect(() => {
-    if (localStorage.getItem('oba-setup-v1') !== 'done') navigate('/setup', { replace: true })
+    if (localStorage.getItem('oba-setup-v1') !== 'done' && window.location.hash.split('?')[0] !== '#/assistant-desk')
+      navigate('/setup', { replace: true })
   }, [navigate])
   const { enabled: devMode } = useDevMode()
   const { accounts, currentAccountId } = useAccounts()
+  const previousAccountId = useRef(currentAccountId)
 
   useEffect(() => {
+    if (previousAccountId.current !== currentAccountId) {
+      void window.ipcRenderer.invoke(IPC_CHANNELS.deepSeekAuto.request, {
+        action: 'disable',
+        accountId: previousAccountId.current,
+      })
+      previousAccountId.current = currentAccountId
+    }
     const auto = useCodexAutoStore.getState().state
     if (auto.enabled && auto.accountId && auto.accountId !== currentAccountId)
       void window.ipcRenderer.invoke(IPC_CHANNELS.codexAuto.configure, {
@@ -127,7 +144,7 @@ function App() {
             <Header />
 
             {/* 主体内容 */}
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 min-h-0 flex overflow-hidden">
               {/* 侧边栏 */}
               <Sidebar />
 
@@ -138,7 +155,7 @@ function App() {
             </div>
 
             {/* 下半部分：日志显示器 */}
-            <div className="h-[180px] bg-white border-t shadow-inner">
+            <div className="shrink-0 bg-white border-t shadow-inner">
               <LogDisplayer />
             </div>
           </div>

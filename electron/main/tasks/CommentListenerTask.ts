@@ -3,6 +3,11 @@ import { IPC_CHANNELS } from 'shared/ipcChannels'
 import { emitter } from '#/event/eventBus'
 import type { ScopedLogger } from '#/logger'
 import type { ICommentListener } from '#/platforms/IPlatform'
+import {
+  type CommentSubscription,
+  CommentSubscriptionCoordinator,
+  normalizeCommentSource,
+} from '#/services/CommentSubscriptionCoordinator'
 import { WebSocketService } from '#/services/WebSocketService'
 import windowManager from '#/windowManager'
 import { createTask } from './BaseTask'
@@ -15,11 +20,25 @@ export function createCommentListenerTask(
   config: CommentListenerConfig,
   account: Account,
   _logger: ScopedLogger,
+  subscriptions?: CommentSubscriptionCoordinator,
 ) {
   const logger = _logger.scope(TASK_NAME)
   let wsService: WebSocketService | null
+  const coordinator =
+    subscriptions ??
+    new CommentSubscriptionCoordinator({
+      scope: {
+        accountId: account.id,
+        platform: 'dev',
+        source: normalizeCommentSource(config.source),
+      },
+      listener: platform,
+      observeBusiness: () => {},
+    })
+  let lease: CommentSubscription | undefined
 
   async function execute() {
+    let acquired: CommentSubscription | undefined
     try {
       if (config.ws) {
         wsService = new WebSocketService()
@@ -29,9 +48,16 @@ export function createCommentListenerTask(
           wsService = null
         })
       }
-      await platform.startCommentListener(broadcastMessage, config.source)
+      acquired = coordinator.acquire(
+        { ...coordinator.scope, source: normalizeCommentSource(config.source) },
+        { id: task.getTaskId(), onComment: broadcastMessage, listenerSource: config.source },
+      )
+      lease = acquired
+      await acquired.ready
+      if (!task.isRunning() || lease !== acquired) return
       logger.info('开始监听评论')
     } catch (err) {
+      if (!task.isRunning() || (acquired && lease !== acquired)) return
       // 失败了还要告诉渲染层关闭按钮
       windowManager.send(IPC_CHANNELS.tasks.autoReply.listenerStopped, account.id)
       task.stop(TaskStopReason.ERROR, err)
@@ -53,6 +79,16 @@ export function createCommentListenerTask(
   }
 
   function updateConfig(cfg: Partial<CommentListenerConfig>) {
+    if (cfg.source && cfg.source !== config.source) {
+      try {
+        coordinator.assertCanReplace(
+          { ...coordinator.scope, source: normalizeCommentSource(cfg.source) },
+          task.getTaskId(),
+        )
+      } catch (error) {
+        return Result.fail(error instanceof Error ? error : new Error('监听来源冲突'))
+      }
+    }
     if (cfg.ws && cfg.ws.port !== config.ws?.port) {
       config.ws = cfg.ws
       if (!wsService) {
@@ -66,8 +102,15 @@ export function createCommentListenerTask(
     }
     if (cfg.source && config.source !== cfg.source) {
       config.source = cfg.source
-      platform.stopCommentListener()
-      platform.startCommentListener(broadcastMessage, cfg.source)
+      lease?.release().catch(() => logger.warn('旧监听订阅释放失败'))
+      lease = coordinator.acquire(
+        { ...coordinator.scope, source: normalizeCommentSource(cfg.source) },
+        { id: task.getTaskId(), onComment: broadcastMessage, listenerSource: cfg.source },
+      )
+      const updatedLease = lease
+      updatedLease.ready.catch(error => {
+        if (task.isRunning() && lease === updatedLease) task.stop(TaskStopReason.ERROR, error)
+      })
     }
     return Result.succeed()
   }
@@ -83,7 +126,7 @@ export function createCommentListenerTask(
       },
       onStop: () => {
         emitter.emit('comment-listener-stopped', { accountId: account.id })
-        platform.stopCommentListener()
+        lease?.release().catch(() => logger.warn('监听订阅释放失败'))
         wsService?.stop()
         wsService = null
       },

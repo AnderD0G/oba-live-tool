@@ -239,7 +239,7 @@ export class CodexAutoReplyService {
             continue
           }
           record.phase = 'sending'
-          record.detail = '正在发送，等待平台确认'
+          record.detail = '正在发送'
           this.emit()
           this.ownTexts.set(`${record.accountId}:${record.text}`, Date.now() + 120000)
           for (const [key, until] of this.ownTexts)
@@ -247,7 +247,7 @@ export class CodexAutoReplyService {
           const confirmed = await this.deps.send(record.accountId, record.text, signal)
           if (!confirmed) throw new Error('平台未确认发送结果，请检查直播间；不会自动重发')
           record.phase = 'sent'
-          record.detail = '平台已确认发送'
+          record.detail = '发送完成'
           this.nextSend = Date.now() + (this.deps.intervalMs ?? 5000)
         } catch (error) {
           record.phase = signal.aborted ? 'cancelled' : 'failed'

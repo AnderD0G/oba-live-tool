@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto'
 import type { CDPSession, Page, Response } from 'playwright'
 import { createLogger } from '#/logger'
+import type { BusinessSourceObservation } from '../IPlatform'
+import { decodeXiaohongshuBusinessFrame } from './businessFrame'
+import { mapXiaohongshuMessage } from './messages'
 
 interface WebSocketFrameReceivedEvent {
   requestId: string
@@ -9,78 +13,6 @@ interface WebSocketFrameReceivedEvent {
     mask: boolean
     payloadData: string // 就你要的
   }
-}
-
-interface XiaohongshuWebSocketMessage {
-  /** 1 */
-  v: number
-  /** 4 是需要的; 0 没有任何东西 */
-  t: number
-  /** 0ac开头，不知道是什么玩意 */
-  m: string
-  b: {
-    d: {
-      /** 0 */
-      a: 0
-      b: Array<{
-        /** 这就是需要的信息，base64 编码 */
-        d: string
-        // biome-ignore lint/complexity/noBannedTypes: 暂时不知道 e 里有什么，就是个 {}
-        e: {}
-        /** 一串数字开头不知道是什么，是递增的 */
-        m: string
-      }>
-      /** 值都是 room */
-      biz: 'room'
-      /** 时间戳 */
-      t: number
-    }
-  }
-}
-
-interface ParsedWebsocketMessage {
-  /** 1 是有用的，3 不管他 */
-  command: number
-  /** JSON 字符串，能转成 XiaohongshuMessage */
-  customData: string
-  msgId: string
-  /** 3 */
-  priority: number
-  roomId: string
-  /** LIVE */
-  roomType: string
-  /** 时间戳 */
-  ts: number
-  uuid: string
-}
-
-interface XiaohongshuMessage {
-  /** text | refresh | letter_refresh | goods_rank_entrance_im 等等，评论就是 text */
-  type: string
-  /** 时间戳 */
-  current_time: number
-  source: string
-  translated: boolean
-  at_users: []
-  /** 'zh-cn' | 'num_sp_ch'（数字字符） */
-  origin_language: string
-  commentId: string
-  profile: {
-    /** url */
-    avatar: string
-    nickname: string
-    /** 可能主播是 1 */
-    role: number
-    user_id: string
-    follow_status: number
-  }
-  /** 评论内容 */
-  desc: string
-  /** 0 */
-  comment_type: number
-  aggregate: boolean
-  /** 1 */
-  ack_code: number
 }
 
 interface XiaohongshuSendCommentResponse {
@@ -102,8 +34,14 @@ export class XiaohongshuCommentListener {
   private client: CDPSession | null = null
   private accountName = ''
   private handleComment: (comment: LiveMessage) => void = () => {}
+  private readonly streamId = randomUUID()
+  private sequence = 0
+  private stopped = false
 
-  constructor(private page: Page) {
+  constructor(
+    private page: Page,
+    private observeBusiness: (observation: BusinessSourceObservation) => void = () => {},
+  ) {
     this.handleWebSocketResponse = this.handleWebSocketResponse.bind(this)
     this.handleResponse = this.handleResponse.bind(this)
   }
@@ -114,11 +52,13 @@ export class XiaohongshuCommentListener {
   }
 
   async startCommentListener(onComment: (comment: LiveMessage) => void): Promise<void> {
+    this.stopped = false
     if (!this.client) {
       this.client = await this.getCDPSession()
     }
     this.handleComment = onComment
-    this.client.send('Network.enable')
+    await this.client.send('Network.enable')
+    if (this.stopped) return
     this.client.on('Network.webSocketFrameReceived', this.handleWebSocketResponse)
     // 还有主动发送的消息，不会通过 WebSocket
     this.page.on('response', this.handleResponse)
@@ -154,44 +94,59 @@ export class XiaohongshuCommentListener {
   }
 
   private async handleWebSocketResponse({ response }: WebSocketFrameReceivedEvent) {
-    const payload = response.payloadData
-    const wsMessage: XiaohongshuWebSocketMessage = JSON.parse(payload)
-    if (wsMessage.t !== 4) return
-    const contentArray = wsMessage.b.d.b
-    contentArray.forEach(content => {
-      const commentMessage = this.parseWsContent(content)
-      if (!commentMessage) return
-      const liveMessage: LiveMessage = {
-        msg_type: 'xiaohongshu_comment',
-        msg_id: commentMessage.commentId,
-        nick_name: commentMessage.profile.nickname,
-        user_id: commentMessage.profile.user_id,
-        content: commentMessage.desc,
-        time: commentMessage.current_time,
+    if (this.stopped) return
+    const decoded = decodeXiaohongshuBusinessFrame(response.payloadData)
+    for (const content of decoded.contents) {
+      const data = content.payload.data
+      const type =
+        data && typeof data === 'object' && !Array.isArray(data) && typeof data.type === 'string'
+          ? data.type.slice(0, 128)
+          : undefined
+      const receivedAt = Date.now()
+      const platformTime =
+        content.envelope.ts >= 1000000000000 && content.envelope.ts <= receivedAt + 86400000
+          ? content.envelope.ts
+          : undefined
+      const observation: BusinessSourceObservation = {
+        ...content.payload,
+        observationId: randomUUID(),
+        streamId: this.streamId,
+        sequence: ++this.sequence,
+        receivedAt,
+        formatVersion: 1,
+        ...(platformTime === undefined ? {} : { platformTime }),
+        ...(content.envelope.msgId ? { sourceMessageId: content.envelope.msgId } : {}),
+        ...(content.envelope.roomId ? { roomId: content.envelope.roomId } : {}),
+        ...(type ? { businessType: type } : {}),
+        ...(content.failureCode ? { failureCode: content.failureCode } : {}),
       }
-      this.handleComment(liveMessage)
-    })
-  }
-
-  private parseWsContent(content: XiaohongshuWebSocketMessage['b']['d']['b'][number]) {
-    const newData = JSON.parse(
-      Buffer.from(content.d, 'base64').toString('utf-8'),
-    ) as ParsedWebsocketMessage
-    if (newData.command !== 1) return null
-    const message = JSON.parse(newData.customData) as XiaohongshuMessage
-    if (message.type !== 'text') return null
-    return message
+      try {
+        this.observeBusiness(observation)
+      } catch {
+        /* Observers cannot break normalized monitoring. */
+      }
+      if (content.failureCode) continue
+      try {
+        const message = mapXiaohongshuMessage(data, content.envelope)
+        if (message) this.handleComment(message)
+      } catch {
+        /* A malformed business item or one consumer cannot discard its siblings. */
+      }
+    }
   }
 
   public setAccountName(accountName: string) {
     this.accountName = accountName
   }
 
-  stopCommentListener(): void {
-    this.client?.off('Network.webSocketFrameReceived', this.handleWebSocketResponse)
-    this.client?.send('Network.disable')
+  async stopCommentListener(): Promise<void> {
+    this.stopped = true
+    const client = this.client
+    client?.off('Network.webSocketFrameReceived', this.handleWebSocketResponse)
     this.page.off('response', this.handleResponse)
     this.client = null
+    await client?.send('Network.disable').catch(() => {})
+    await client?.detach().catch(() => {})
   }
   getCommentListenerPage(): Page {
     return this.page

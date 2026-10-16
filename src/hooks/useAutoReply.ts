@@ -34,7 +34,7 @@ export type EventMessageType = Extract<
   | 'ecom_fansclub_participate'
 >
 export type MessageOf<T extends MessageType> = Extract<Message, { msg_type: T }>
-type CommentMessage = MessageOf<Exclude<MessageType, EventMessageType>>
+type CommentMessage = Extract<Message, { content: string }>
 
 type ListeningStatus = 'waiting' | 'listening' | 'stopped' | 'error'
 
@@ -404,6 +404,10 @@ export function useAutoReply() {
           }
           break
         }
+        case 'tiktok_member':
+        case 'xiaohongshu_member':
+        case 'xiaohongshu_follow':
+          break
         case 'live_order': {
           /* 如果设置了仅已支付回复且当前非已支付时不回复 */
           if (!config.live_order.options?.onlyReplyPaid || comment.order_status === '已付款') {

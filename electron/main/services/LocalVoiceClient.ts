@@ -69,6 +69,71 @@ export class LocalVoiceClient {
     }
   }
 
+  /** Generate only. OBS owns playback and timing; never arm the soundcard here. */
+  async synthesize(
+    accountId: string,
+    id: string,
+    text: string,
+    signal: AbortSignal,
+  ): Promise<Uint8Array> {
+    if (!text.trim() || text.length > 200) throw new Error('语音文字需为 1～200 字')
+    const requestId = `oba-preview-${createHash('sha256')
+      .update(JSON.stringify([accountId, id, text]))
+      .digest('hex')}`
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(20000)])
+    this.active.add(requestId)
+    try {
+      const job = (await this.request(
+        '/v1/speak',
+        { text, mode: 'preview', request_id: requestId },
+        bounded,
+      )) as { id: string }
+      if (!/^[0-9a-f]{32}$/.test(job.id)) throw new Error('语音任务编号无效')
+      for (;;) {
+        bounded.throwIfAborted()
+        const state = (await this.request('/v1/status', undefined, bounded)) as VoiceState
+        const item = state.jobs.find(value => value.id === job.id)
+        if (!item) throw new Error('语音任务已丢失')
+        if (item.status === '失败' || item.status === '已取消')
+          throw new Error(item.error || item.status)
+        if (item.status === '可试听') {
+          const token = (await readFile(await this.tokenPath(), 'utf8')).trim()
+          const response = await fetch(`${this.baseUrl}/v1/audio/${job.id}`, {
+            headers: { 'X-Voice-Token': token },
+            redirect: 'error',
+            signal: bounded,
+          })
+          if (!response.ok) throw new Error('无法读取生成的语音')
+          const chunks: Uint8Array[] = []
+          let size = 0
+          const reader = response.body?.getReader()
+          if (!reader) throw new Error('语音文件为空')
+          try {
+            for (;;) {
+              const { value, done } = await reader.read()
+              if (done) break
+              size += value.byteLength
+              if (size > 10 * 1024 * 1024) throw new Error('语音文件过大')
+              chunks.push(value)
+            }
+          } finally {
+            await reader.cancel().catch(() => {})
+          }
+          const audio = Buffer.concat(chunks)
+          if (audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE')
+            throw new Error('语音服务未返回 WAV')
+          return audio
+        }
+        await delay(this.pollMs, undefined, { signal: bounded })
+      }
+    } catch (error) {
+      await this.request('/v1/cancel', { request_id: requestId }).catch(() => {})
+      throw error
+    } finally {
+      this.active.delete(requestId)
+    }
+  }
+
   private describe(error: unknown) {
     if (error instanceof Error && !/ENOENT|fetch failed/.test(error.message)) return error.message
     return '无法连接本地语音台，请启动 127.0.0.1:17863 并检查连接配置'

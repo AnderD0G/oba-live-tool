@@ -1,0 +1,35 @@
+{
+  "testedOn": "2026-10-16 Asia/Singapore",
+  "host": "Windows Docker Desktop 28.5.1, Linux amd64 containers",
+  "chromium": "Chrome/151.0.7922.71",
+  "node": "v24.22.0",
+  "desktop": { "url": "https://127.0.0.1:13443/", "httpStatus": 200 },
+  "basic": { "httpApi": true, "cdp": true, "pageLoaded": true },
+  "transport": {
+    "path": "isolated local Chrome fake WAV microphone -> Selkies -> container Pulse -> container Chromium getUserMedia",
+    "sentHz": 440,
+    "maxRms": 0.015236212185518001,
+    "peakHz": 441.4306640625,
+    "sampleRate": 44100,
+    "passed": true
+  },
+  "recognition": {
+    "input": "Huihui offline synthesis of 这是一个语音输入测试，今天直播准备好了。 repeated twice",
+    "ok": true,
+    "text": "是，今天直播准备好了。这是一个语音输入测试，今天直播准备好了。这是",
+    "startMs": 946,
+    "stopMs": 961,
+    "recordingAfter": false,
+    "busyAfter": null
+  },
+  "cancel": { "ok": true, "startMs": 933, "cancelMs": 1072, "recordingAfter": false, "busyAfter": null },
+  "physicalMicrophoneUsed": false,
+  "priorIssue": "Initial Doubao voice control stayed aria-busy/cursor-wait and start returned not_recording. A single reload of the empty, nonrecording container page plus fixed-origin permission grant restored the controlled test. No profile was cleared.",
+  "boundaries": [
+    "Existing host 7799/9223 services were not changed or used for these tests.",
+    "No existing cookies/profile were copied; user manually logged in to the independent named volume.",
+    "Current user IAB microphone permission was not changed or verified.",
+    "Mac arm64 hardware and physical microphone access remain untested.",
+    "The production core still uses its existing voice service; this POC is optional and isolated."
+  ]
+}

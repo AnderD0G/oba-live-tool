@@ -59,10 +59,9 @@ const StatusAlert = React.memo(() => {
     return (
       <Alert>
         <CircleAlert className="h-4 w-4" />
-        <AlertTitle>TikTok LIVE 第一版测试</AlertTitle>
+        <AlertTitle>TikTok LIVE · 登录与监听目标</AlertTitle>
         <AlertDescription>
-          先填写正在直播的主播账号。连接时会打开 TikTok 登录页；登录一次后，OBA
-          会保存这台电脑的登录状态。
+          填写要观看、采集的直播间，支持别人的直播间。连接时用你自己的 TikTok 账号登录；登录状态保存在这台电脑。只采集请在连接后进入“自动分析室”。
         </AlertDescription>
       </Alert>
     )
@@ -188,15 +187,16 @@ const TikTokSetting = React.memo(() => {
 
   return (
     <div className="space-y-2">
-      <div className="text-sm font-medium">TikTok 主播账号</div>
+      <label htmlFor="tiktok-listen-target" className="text-sm font-medium">TikTok 监听目标（主播 @账号／直播间网址）</label>
       <Input
+        id="tiktok-listen-target"
         value={username}
         disabled={isConnected !== 'disconnected'}
         onChange={event => setTikTokUsername(event.target.value)}
         placeholder="例如 @yourname，也可以粘贴直播间网址"
       />
       <p className="text-xs text-muted-foreground">
-        填写正在开播的账号；监听时只接收点击“开始监听”之后的新弹幕。
+        此处是要监听的主播，不是你的登录账号。更换目标前先停止采集并断开连接；采集只保存新事件。
       </p>
     </div>
   )

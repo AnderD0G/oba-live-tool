@@ -1,0 +1,38 @@
+name: oba-voice-poc
+
+services:
+  chromium:
+    image: lscr.io/linuxserver/chromium@sha256:001441f174ecf13ac9070ebbc0e0a3d0e6844e4d374e08ba7d6a22dcf03de993
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Asia/Singapore
+      CHROME_CLI: --remote-debugging-address=127.0.0.1 --remote-debugging-port=9223 --user-data-dir=/config/oba-voice-profile --no-first-run --disable-features=Translate https://www.doubao.com/chat/
+      SELKIES_MICROPHONE_ENABLED: "true"
+      SELKIES_MICROPHONE_ON_START: "false"
+      SELKIES_AUDIO_ENABLED: "true"
+      SELKIES_AUDIO_ON_START: "false"
+      SELKIES_ENABLE_CLIPBOARD: "false"
+      SELKIES_WEBCAM_ENABLED: "false"
+      SELKIES_GAMEPAD_ENABLED: "false"
+      SELKIES_FRAMERATE: "10"
+    ports:
+      - "127.0.0.1:13443:3001"
+    volumes:
+      - profile:/config
+    shm_size: 1gb
+    restart: "no"
+
+  voice:
+    build: .
+    network_mode: service:chromium
+    environment:
+      DOUBAO_BIND: 0.0.0.0
+      DOUBAO_PORT: "7799"
+      DOUBAO_CDP_PORT: "9223"
+    depends_on:
+      - chromium
+    restart: "no"
+
+volumes:
+  profile:

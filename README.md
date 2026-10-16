@@ -1,4 +1,10 @@
-# OBA 弹幕捕手与扣号打印（定制版）
+# OBA 完整桌面助播台
+
+当前 `develop` 为 Windows 与 Mac 共用开发基线，版本 `1.6.7-voice.52`。完整桌面源码已导入仓库根目录，可直接在此安装依赖与构建；Mac 从本分支创建 `feat/mac-desktop` 开发，验证后合回 `develop`。
+
+基线来源：`deploy/mac-handoff/voice52-20261016` 分支交付的 `deploy/mac-desktop/oba-mac-desktop-1.6.7-voice.52.zip`，SHA-256 为 `d5ef008b33ff42de2f8a5536f2a960bbfc19b0291cdac492c97ad340bbbde368`。导入前已核对包内 841 个源文件；`PACKAGE-MANIFEST.json` 记录原始 ZIP 字节，Git 检出时可能按本机设置转换行尾。保留仓库原有 Windows 构建脚本、文档、测试和协作配置。未导入依赖、构建产物、数据库、浏览器登录、密钥或私人配置。
+
+Mac 构建与验证见 [START-HERE-MAC.md](START-HERE-MAC.md) 和 [桌面交接说明](deploy/mac-desktop/README.md)。Windows 继续使用根目录构建入口。以下定制版旧介绍保留作历史参考。
 
 在 OBA Live Tool 上增加自然语言规则助手、弹幕捕获、每人限单、持久化打印队列、40 × 30 mm 标签及常驻 Codex 文字回复。
 

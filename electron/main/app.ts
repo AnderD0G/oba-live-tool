@@ -4,12 +4,14 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { IPC_CHANNELS } from 'shared/ipcChannels'
+import { desktopLandingHash } from './desktopLanding'
 import { emitter } from './event/eventBus'
-import { providerService } from './services/ProviderService'
-import windowManager from './windowManager'
-import './ipc'
+import { setupIpcHandlers } from './ipc'
+import { shutdownAnalysisServices } from './ipc/analysisRoom'
 import { createLogger } from './logger'
 import { accountManager } from './managers/AccountManager'
+import { providerService } from './services/ProviderService'
+import windowManager from './windowManager'
 
 // const _require = createRequire(import.meta.url)
 
@@ -88,6 +90,7 @@ const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
 async function createWindow() {
+  const landingHash = desktopLandingHash(process.platform, process.argv)
   win = new BrowserWindow({
     title: `OBA Codex 评论草稿 - v${app.getVersion()}`,
     width: 1280,
@@ -109,11 +112,11 @@ async function createWindow() {
 
   if (VITE_DEV_SERVER_URL) {
     // #298
-    win.loadURL(VITE_DEV_SERVER_URL)
+    win.loadURL(`${VITE_DEV_SERVER_URL}${landingHash ? `#${landingHash}` : ''}`)
     // Open devTool if the app is not packaged
     win.webContents.openDevTools()
   } else {
-    win.loadFile(indexHtml)
+    win.loadFile(indexHtml, landingHash ? { hash: landingHash } : undefined)
   }
 
   // 加载完成后检查更新
@@ -134,27 +137,36 @@ async function createWindow() {
 app
   .whenReady()
   .then(logStartupInfo)
+  .then(setupIpcHandlers)
   .then(() => providerService.initialize())
   .then(createWindow)
 
 app.on('window-all-closed', async () => {
   win = null
+  if (process.platform !== 'darwin')
+    await shutdownAnalysisServices().catch(() => {})
   accountManager.cleanup()
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('second-instance', () => {
-  if (win) {
+app.on('second-instance', (_event,commandLine) => {
+  if (win && !win.isDestroyed()) {
     // Focus on the main window if the user tried to open another
     if (win.isMinimized()) win.restore()
+    win.show()
     win.focus()
+    const landingHash = desktopLandingHash(process.platform, commandLine)
+    if (landingHash) void win.webContents.executeJavaScript(`location.hash=${JSON.stringify(landingHash)}`)
   }
 })
 
 app.on('activate', () => {
   const allWindows = BrowserWindow.getAllWindows()
   if (allWindows.length) {
-    allWindows[0].focus()
+    const window = allWindows[0]
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
   } else {
     createWindow()
   }

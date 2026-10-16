@@ -1,0 +1,14 @@
+{
+  "name": "doubao-stt-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "豆包语音转文字 HTTP API 服务",
+  "main": "doubao_ctl.mjs",
+  "scripts": {
+    "start": "node doubao_ctl.mjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  }
+}

@@ -2,6 +2,18 @@ import type { Result } from '@praha/byethrow'
 import type { Page } from 'playwright'
 import type { PlatformError } from '#/errors/PlatformError'
 import type { BrowserSession } from '#/managers/BrowserSessionManager'
+import type { AnalysisScope, BusinessObservation, CaptureTransports } from '../../../shared/analysisRoom'
+import type { TikTokWireDiagnosticsSnapshot } from '../../../shared/platformPageDiagnostics'
+import type { PlatformLoginSnapshot, PlatformLoginQrPreview } from '../../../shared/platformSession'
+import type { BrowserTranslationObservation } from '../../../shared/browserTranslation'
+
+/** Optional passive rendering channel; its subscribers never receive canonical platform events. */
+export interface ITranslationObserver {
+  subscribeTranslations(listener: (observation: BrowserTranslationObservation) => void): () => void
+}
+export function isTranslationObserver(platform: unknown): platform is ITranslationObserver {
+  return !!platform && typeof platform === 'object' && 'subscribeTranslations' in platform && typeof platform.subscribeTranslations === 'function'
+}
 
 export interface ICommentListener {
   _isCommentListener: true
@@ -10,8 +22,28 @@ export interface ICommentListener {
     /** 暂定，control 为中控台互动评论监听， compass 为直播大屏监听 */
     source: CommentListenerConfig['source'],
   ): void | Promise<void>
-  stopCommentListener(): void
+  stopCommentListener(): void | Promise<void>
+  /** Unexpected loss of the current listener page; ordinary stop must not emit this. */
+  subscribeListenerInvalidation?(listener: (reason: string) => void): () => void
   getCommentListenerPage(): Page
+  getSdkNetworkDiagnostics?(marker?: string): TikTokWireDiagnosticsSnapshot
+}
+
+export type BusinessSourceObservation = Omit<BusinessObservation, 'scope'>
+export interface IBusinessDataSource {
+  subscribeBusiness(listener: (observation: BusinessSourceObservation) => void): () => void
+  businessCapabilities(): { sources: AnalysisScope['source'][]; formatVersion: number; captureTransports?: CaptureTransports }
+}
+
+export function isBusinessDataSource(platform: unknown): platform is IBusinessDataSource {
+  return (
+    !!platform &&
+    typeof platform === 'object' &&
+    'subscribeBusiness' in platform &&
+    typeof platform.subscribeBusiness === 'function' &&
+    'businessCapabilities' in platform &&
+    typeof platform.businessCapabilities === 'function'
+  )
 }
 
 export function isCommentListener(platform: IPlatform): platform is IPlatform & ICommentListener {
@@ -75,6 +107,25 @@ export interface IPlatform {
   getAccountName(session: BrowserSession): Promise<string>
 
   disconnect(): Promise<void>
+}
+
+/** Optional split login/room workflow; connect/login remain compatible with older callers. */
+export interface ILoginFirstPlatform {
+  _isLoginFirstPlatform: true
+  openLoginBrowser(session: BrowserSession): Promise<void>
+  /** Adopts an already open, authenticated live page without navigating it. */
+  attachLoginBrowser?(session: BrowserSession, pageUrl: string): Promise<void>
+  getPlatformSessionState(session: BrowserSession): Promise<PlatformLoginSnapshot>
+  setLiveTarget(session: BrowserSession, target: string): Promise<void>
+  getLoginQrPreview(session: BrowserSession): Promise<PlatformLoginQrPreview>
+}
+
+export function isLoginFirstPlatform(platform: IPlatform): platform is IPlatform & ILoginFirstPlatform {
+  return '_isLoginFirstPlatform' in platform && platform._isLoginFirstPlatform === true &&
+    'openLoginBrowser' in platform && typeof platform.openLoginBrowser === 'function' &&
+    'getPlatformSessionState' in platform && typeof platform.getPlatformSessionState === 'function' &&
+    'setLiveTarget' in platform && typeof platform.setLiveTarget === 'function' &&
+    'getLoginQrPreview' in platform && typeof platform.getLoginQrPreview === 'function'
 }
 
 export interface IConfigurablePlatform {

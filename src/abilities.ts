@@ -28,7 +28,7 @@ export const listeningSources: Record<ListeningSource, { name: string; tips: str
   },
   tiktok: {
     name: 'TikTok LIVE',
-    tips: '只接收连接成功后的新评论，不回放连接前的历史弹幕',
+    tips: '接收连接成功后的新评论和观众进场事件，不回放连接前的历史消息',
   },
 } as const
 

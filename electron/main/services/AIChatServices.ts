@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 import OpenAI, { AuthenticationError, NotFoundError } from 'openai'
 import { createLogger } from '#/logger'
 import { providerService } from '#/services/ProviderService'
+import { type AssistantDiagnosticContext, type AssistantDiagnosticTrace, assistantDiagnosticCode, currentAssistantDiagnostic, runAssistantDiagnosticStage } from './AssistantDiagnostics'
 
 type ProviderType = string
 
@@ -88,23 +91,42 @@ export class AIChatService {
     }
   }
 
-  public async chat(messages: ChatMessage[], model: string) {
+  public async chat(
+    messages: ChatMessage[],
+    model: string,
+    options?: { signal?: AbortSignal; json?: boolean; timeout?: number; disableThinking?: boolean; diagnostics?: { context: AssistantDiagnosticContext; trace: AssistantDiagnosticTrace } },
+  ) {
+    const diagnostics = options?.diagnostics ?? currentAssistantDiagnostic()
+    const context = diagnostics?.context ?? { traceId: randomUUID(), action: 'ai.chat' }
+    const started = performance.now()
     try {
       this.logger.debug('非流式 chat 请求', { model })
+      this.logger.info('ai.chat', JSON.stringify({ traceId: context.traceId, stage: 'provider', phase: 'start' }))
 
-      const response = await this.openai.chat.completions.create({
-        model,
-        messages,
-        stream: false,
-      })
+      const response = await runAssistantDiagnosticStage(diagnostics?.trace, context, 'provider', () => this.openai.chat.completions.create(
+        {
+          model,
+          messages,
+          stream: false,
+          ...(options?.json
+            ? { response_format: { type: 'json_object' as const }, max_tokens: 500 }
+            : {}),
+          ...((options?.disableThinking ??
+          (options?.json && this.baseURL === 'https://api.deepseek.com'))
+            ? { thinking: { type: 'disabled' } }
+            : {}),
+        },
+        { signal: options?.signal, timeout: options?.timeout ?? 30000, maxRetries: 0 },
+      ))
 
       const output = response.choices[0].message.content ?? ''
 
       this.logger.debug('chat 响应完成', { outputLength: output.length })
+      this.logger.info('ai.chat', JSON.stringify({ traceId: context.traceId, stage: 'provider', phase: 'finish', durationMs: Math.round(performance.now() - started), counts: { outputCharacters: output.length } }))
 
       return output
     } catch (error) {
-      this.logger.error('AI 不想回答：chat 错误', error)
+      this.logger.error('ai.chat', JSON.stringify({ traceId: context.traceId, stage: 'provider', phase: 'error', durationMs: Math.round(performance.now() - started), code: assistantDiagnosticCode(error) }))
       throw error
     }
   }

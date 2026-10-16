@@ -15,7 +15,8 @@ export class AccountManager {
   private logger = createLogger('账号管理')
 
   constructor() {
-    emitter.on('page-closed', ({ accountId }) => {
+    emitter.on('page-closed', ({ accountId, sessionId }) => {
+      if (sessionId && this.accountSessions.get(accountId)?.instanceId !== sessionId) return
       this.closeSession(accountId)
     })
   }

@@ -9,8 +9,15 @@ import { configuredVoiceTokenPath, LocalVoiceClient } from '#/services/LocalVoic
 import { PersistentCodexDraftService } from '#/services/PersistentCodexDraftService'
 import { typedIpcMainHandle } from '#/utils'
 import windowManager from '#/windowManager'
+import { isDeepSeekAutoActive } from '../services/DeepSeekAutoState'
 import { setupCommentCatcher } from './commentCatcher'
+import { isDirectorControlling } from './director'
 import { setupEnvironmentIpc } from './setup'
+
+let suspendForDirector: (id: string) => Promise<void> = async () => {}
+export async function suspendCodexForDirector(id: string) {
+  await suspendForDirector(id)
+}
 
 export function setupCodexDraftIpcHandlers() {
   const service = new PersistentCodexDraftService(async () => {
@@ -37,7 +44,15 @@ export function setupCodexDraftIpcHandlers() {
       voice.speak(accountId, commentId, text, signal, progress),
     changed: state => windowManager.send(IPC_CHANNELS.codexAuto.changed, state),
   })
-  emitter.on('live-comment', ({ accountId, comment }) => auto.comment(accountId, comment))
+  suspendForDirector = async id => {
+    if (auto.snapshot().accountId === id && auto.snapshot().enabled) {
+      auto.disable('互动导播已接管讲解与互动')
+      await voice.cancelActive()
+    }
+  }
+  emitter.on('live-comment', ({ accountId, comment }) => {
+    if (!isDirectorControlling(accountId)) auto.comment(accountId, comment)
+  })
   emitter.on('comment-listener-stopped', ({ accountId }) => auto.disconnected(accountId))
   let quitting = false
   app.on('before-quit', event => {
@@ -58,6 +73,11 @@ export function setupCodexDraftIpcHandlers() {
   typedIpcMainHandle(IPC_CHANNELS.codexAuto.voiceStatus, () => voice.check())
   typedIpcMainHandle(IPC_CHANNELS.codexAuto.configure, async (event, settings) => {
     try {
+      if (
+        settings?.enabled &&
+        (isDirectorControlling(settings.accountId) || isDeepSeekAutoActive(settings.accountId))
+      )
+        throw new Error('请先关闭互动导播或 DeepSeek 自动回复')
       if (
         !settings ||
         typeof settings.accountId !== 'string' ||

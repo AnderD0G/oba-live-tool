@@ -3,6 +3,7 @@
   "appId": "com.local.oba.codexdraft",
   "npmRebuild": false,
   "asar": true,
+  "asarUnpack": ["dist-electron/main/analysis-capture-worker.cjs", "dist-electron/main/fresh-analysis-worker.cjs"],
   "directories": {
     "output": "release/${version}"
   },

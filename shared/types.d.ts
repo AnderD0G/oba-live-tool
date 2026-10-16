@@ -195,6 +195,27 @@ declare type XiaohongshuCommentLiveMessage = {
   time: number
 }
 
+declare type XiaohongshuMemberLiveMessage = {
+  msg_type: 'xiaohongshu_member'
+  msg_id: string
+  nick_name: string
+  user_id: string
+  follow_status: number
+  role: number
+  room_id: string
+  time: number
+}
+
+declare type XiaohongshuFollowLiveMessage = {
+  msg_type: 'xiaohongshu_follow'
+  msg_id: string
+  nick_name: string
+  user_id: string
+  follow_status: number
+  room_id: string
+  time: number
+}
+
 declare type TaobaoCommentLiveMessage = {
   msg_type: 'taobao_comment'
   msg_id: string
@@ -204,19 +225,100 @@ declare type TaobaoCommentLiveMessage = {
   time: number
 }
 
+/** Positive or nonempty public SDK facts; decoder defaults are deliberately absent. */
+declare type TikTokPublicViewerMetadata = {
+  avatarUrl?: string
+  followingCount?: number
+  followStatus?: number
+  subscriptionActive?: true
+  bio?: string
+}
+
 declare type TikTokCommentLiveMessage = {
   msg_type: 'tiktok_comment'
   msg_id: string
   nick_name: string
   user_id: string
   unique_id: string
+  mention_handle?: string
+  pay_level?: number
+  fans_club_level?: number
+  follower_count?: number
+  public_profile?: TikTokPublicViewerMetadata
   content: string
   time: number
 }
 
-declare type LiveMessage =
+declare type TikTokMemberLiveMessage = {
+  msg_type: 'tiktok_member'
+  msg_id: string
+  nick_name: string
+  user_id: string
+  unique_id: string
+  mention_handle?: string
+  member_action?: number
+  fans_club_level?: number
+  pay_level?: number
+  follower_count?: number
+  public_profile?: TikTokPublicViewerMetadata
+  is_subscriber: boolean
+  follow_status: string
+  time: number
+}
+
+declare type TikTokLeaveLiveMessage = Omit<TikTokMemberLiveMessage, 'msg_type'> & { msg_type: 'tiktok_leave' }
+
+declare type TikTokEngagementLiveMessage = {
+  msg_type: 'tiktok_follow' | 'tiktok_like'
+  msg_id: string
+  nick_name: string
+  user_id: string
+  unique_id: string
+  mention_handle?: string
+  pay_level?: number
+  fans_club_level?: number
+  follower_count?: number
+  public_profile?: TikTokPublicViewerMetadata
+  like_count?: number
+  time: number
+}
+
+declare type TikTokGiftLiveMessage = {
+  msg_type: 'tiktok_gift'
+  msg_id: string
+  nick_name: string
+  user_id: string
+  unique_id: string
+  mention_handle?: string
+  pay_level?: number
+  fans_club_level?: number
+  follower_count?: number
+  public_profile?: TikTokPublicViewerMetadata
+  time: number
+  /** Empty when neither the event nor the active connection proves a numeric room ID. */
+  room_id: string
+  gift_id: string
+  gift_name: string
+  gift_type: number
+  repeat_count: number
+  repeat_end: boolean
+  group_id?: string
+  /** Native gift.diamondCount; unknown or invalid values are omitted, never cash-converted. */
+  gift_unit_coins?: number
+  /** Unit coins times this snapshot's repeat_count; omitted if the product is unsafe. */
+  gift_total_coins?: number
+}
+
+declare type LiveMessage = (
   | WechatChannelLiveMessage
   | DouyinLiveMessage
   | XiaohongshuCommentLiveMessage
+  | XiaohongshuMemberLiveMessage
+  | XiaohongshuFollowLiveMessage
   | TaobaoCommentLiveMessage
   | TikTokCommentLiveMessage
+  | TikTokMemberLiveMessage
+  | TikTokLeaveLiveMessage
+  | TikTokEngagementLiveMessage
+  | TikTokGiftLiveMessage
+) & { metadata?: import('./browserTranslation').LiveMessageTranslationMetadata }

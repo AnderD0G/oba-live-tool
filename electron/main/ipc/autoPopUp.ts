@@ -1,3 +1,4 @@
+import { isDirectorControlling } from './director'
 import { Result } from '@praha/byethrow'
 import { globalShortcut } from 'electron'
 import { throttle } from 'lodash-es'
@@ -12,6 +13,7 @@ const TASK_TYPE = 'auto-popup'
 // IPC 处理程序
 function setupIpcHandlers() {
   typedIpcMainHandle(IPC_CHANNELS.tasks.autoPopUp.start, async (_, accountId, config) => {
+    if (isDirectorControlling(accountId)) return false
     return await Result.pipe(
       accountManager.getSession(accountId),
       Result.andThen(accountSession => accountSession.startTask({ type: TASK_TYPE, config })),
@@ -36,6 +38,7 @@ function setupIpcHandlers() {
   })
 
   typedIpcMainHandle(IPC_CHANNELS.tasks.autoPopUp.updateConfig, async (_, accountId, newConfig) => {
+    if (isDirectorControlling(accountId)) return
     const logger = createLogger(`@${accountManager.getAccountName(accountId)}`).scope(TASK_NAME)
     Result.pipe(
       accountManager.getSession(accountId),
@@ -52,6 +55,7 @@ function setupIpcHandlers() {
         sc.accelerator,
         throttle(
           () => {
+            if (isDirectorControlling(accountId)) return
             Result.pipe(
               accountManager.getSession(accountId),
               Result.andThen(accountSession =>

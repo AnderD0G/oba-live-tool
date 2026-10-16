@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!*.mjs
+!vendor/
+!vendor/**
+**/node_modules

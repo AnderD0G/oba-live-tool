@@ -1,13 +1,56 @@
 import type { LogMessage } from 'electron-log'
 import type { ProgressInfo, UpdateDownloadedEvent } from 'electron-updater'
+import type { AnalysisChanged, AnalysisCommand, AnalysisResponse } from './analysisRoom'
+import type { AssistantDeskCommand, AssistantDeskResult } from './assistantDesk'
+import type { AssistantVoiceCommand, AssistantVoiceResult } from './assistantVoice'
+import type { MobileAssistantAccessCommand, MobileAssistantAccessResult } from './mobileAssistantDesk'
+import type { EffectGroupCommand } from './effectGroups'
+import type { PlatformSessionCommand, PlatformSessionResult } from './platformSession'
+import type { AuditEntry } from './audit'
 import type { TicketCommand, TicketResponse } from './capturePrinting'
 import type { CodexAutoSettings, CodexAutoState } from './codexAutoReply'
 import type { CodexDraftRequest, CodexDraftResult, CodexStatus } from './codexDraft'
 import type { CatcherCommand, CatcherResponse } from './commentCatcher'
+import type {
+  DeepSeekAutoCommand,
+  DeepSeekAutoSettings,
+  HumanLiveCameraStatus,
+  HumanLiveItem,
+} from './deepSeekAuto'
+import type { DirectorCommand, DirectorResponse } from './director'
+import type { DirectorExperimentCommand, DirectorExperimentResponse } from './directorExperiment'
+import type { HookCommand, HookResponse } from './hooks'
 import { IPC_CHANNELS } from './ipcChannels'
+import type { ObsEffectCommand, ObsEffectResponse } from './obsEffect'
 import type { SetupAction, SetupResult } from './setup'
 
 export interface IpcChannels {
+  [IPC_CHANNELS.assistantDesk.request]: (command:AssistantDeskCommand)=>Promise<AssistantDeskResult>
+  [IPC_CHANNELS.assistantVoice.request]: (command:AssistantVoiceCommand)=>Promise<AssistantVoiceResult>
+  [IPC_CHANNELS.assistantMobile.request]: (command:MobileAssistantAccessCommand)=>Promise<MobileAssistantAccessResult>
+  [IPC_CHANNELS.effectGroups.request]: (command:EffectGroupCommand)=>Promise<AssistantDeskResult>
+  [IPC_CHANNELS.platformSession.request]: (command:PlatformSessionCommand)=>Promise<PlatformSessionResult>
+  [IPC_CHANNELS.analysisRoom.request]: (command: AnalysisCommand) => Promise<AnalysisResponse>
+  [IPC_CHANNELS.analysisRoom.changed]: (change: AnalysisChanged) => void
+  [IPC_CHANNELS.audit.list]: (accountId?: string) => Promise<AuditEntry[]>
+  [IPC_CHANNELS.director.request]: (command: DirectorCommand) => Promise<DirectorResponse>
+  [IPC_CHANNELS.directorExperiment.request]: (command: DirectorExperimentCommand) => Promise<DirectorExperimentResponse>
+  [IPC_CHANNELS.deepSeekAuto.request]: (command: DeepSeekAutoCommand) => Promise<{
+    ok: boolean
+    error?: string
+    message?: string
+    settings?: DeepSeekAutoSettings
+    hasKey?: boolean
+    enabled?: boolean
+    records?: import('./director').LiveInteractionRecord[]
+    humanItems?: HumanLiveItem[]
+    companionUrl?: string
+    companionUrls?: string[]
+    cameraStatus?: HumanLiveCameraStatus
+    viewerCount?: number
+  }>
+  [IPC_CHANNELS.hooks.request]: (command: HookCommand) => Promise<HookResponse>
+  [IPC_CHANNELS.obsEffect.request]: (command: ObsEffectCommand) => Promise<ObsEffectResponse>
   [IPC_CHANNELS.setup.request]: (action: SetupAction) => Promise<SetupResult>
   [IPC_CHANNELS.catcher.request]: (command: CatcherCommand) => Promise<CatcherResponse>
   [IPC_CHANNELS.tickets.request]: (command: TicketCommand) => Promise<TicketResponse>
@@ -80,7 +123,7 @@ export interface IpcChannels {
     config: CommentListenerConfig,
   ) => boolean
   [IPC_CHANNELS.tasks.autoReply.stopCommentListener]: (accountId: string) => void
-  [IPC_CHANNELS.tasks.autoReply.sendReply]: (accountId: string, replyContent: string) => void
+  [IPC_CHANNELS.tasks.autoReply.sendReply]: (accountId: string, replyContent: string) => boolean
   [IPC_CHANNELS.tasks.autoReply.listenerStopped]: (accountId: string) => void
   [IPC_CHANNELS.tasks.autoReply.showComment]: (data: {
     comment: LiveMessage

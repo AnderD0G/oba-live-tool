@@ -1,6 +1,6 @@
-import { Filter, Printer } from 'lucide-react'
+import { ClipboardList, Filter, FlaskConical, Languages, Printer, Sparkles, Workflow } from 'lucide-react'
 import { NavLink } from 'react-router'
-import { abilities, autoReplyPlatforms } from '@/abilities'
+import { autoReplyPlatforms } from '@/abilities'
 import { useCurrentAutoMessage } from '@/hooks/useAutoMessage'
 import { useCurrentAutoPopUp } from '@/hooks/useAutoPopUp'
 import { useAutoReply } from '@/hooks/useAutoReply'
@@ -31,6 +31,9 @@ export default function Sidebar() {
   const platform = useCurrentLiveControl(context => context.platform)
 
   const tabs: SidebarTab[] = [
+    { id: '/director', name: '互动导播', icon: <Workflow className="w-5 h-5" /> },
+    { id: '/assistant-desk', name: '实时助播台', icon: <Languages className="w-5 h-5" /> },
+    { id: '/audit', name: '互动审查日志', icon: <ClipboardList className="w-5 h-5" /> },
     { id: '/setup', name: '安装与环境检查', icon: <CarbonSettings className="w-5 h-5" /> },
     { id: '/comment-catcher', name: '弹幕捕手', icon: <Filter className="w-5 h-5" /> },
     { id: '/capture-printing', name: '扣号打印', icon: <Printer className="w-5 h-5" /> },
@@ -39,6 +42,7 @@ export default function Sidebar() {
       name: '打开中控台',
       icon: <CarbonContentDeliveryNetwork className="w-5 h-5" />,
     },
+    { id: '/analysis-room', name: '自动分析室', icon: <FlaskConical className="w-5 h-5" /> },
     {
       id: '/auto-message',
       name: '自动发言',
@@ -57,6 +61,16 @@ export default function Sidebar() {
       isRunning: isAutoReplyRunning,
       icon: <CarbonIbmEventAutomation className="w-5 h-5" />,
       platform: autoReplyPlatforms,
+    },
+    {
+      id: '/obs-effect',
+      name: 'OBS 设置',
+      icon: <Sparkles className="w-5 h-5" />,
+    },
+    {
+      id: '/hooks',
+      name: '钩子设置',
+      icon: <Workflow className="w-5 h-5" />,
     },
     {
       id: '/red-packet',
@@ -84,7 +98,7 @@ export default function Sidebar() {
   })
 
   return (
-    <aside className="w-64 min-w-[256px] bg-background border-r">
+    <aside className="h-full w-64 min-w-[256px] overflow-y-auto bg-background border-r">
       <div className="p-6">
         <h2 className="text-lg font-semibold mb-6">功能列表</h2>
         <nav className="space-y-2">

@@ -68,12 +68,19 @@ export const commonElementFinder = {
     return Result.succeed(id)
   },
 
-  async getCommentTextarea(page: Page, textareaSelector: string) {
-    const textarea = await page.$(textareaSelector)
+  /**
+   * 评论输入框只在【直播中】的中控台里渲染：没开播、或者直播互动面板没打开时，
+   * 页面上根本没有这个元素。所以这里先给一点等待时间（面板可能是异步挂载的），
+   * 真正找不到时把原因写进错误信息，避免只看到一句「找不到元素 评论框」。
+   */
+  async getCommentTextarea(page: Page, textareaSelector: string, timeoutMs = 3000) {
+    const textarea = await page
+      .waitForSelector(textareaSelector, { timeout: timeoutMs, state: 'attached' })
+      .catch(() => null)
     if (!textarea) {
       return Result.fail(
         new ElementNotFoundError({
-          elementName: '评论框',
+          elementName: '评论框（直播间未开播、或中控台没打开直播互动面板时不会出现）',
           selector: textareaSelector,
         }),
       )

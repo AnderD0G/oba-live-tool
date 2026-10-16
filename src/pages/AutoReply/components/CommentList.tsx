@@ -21,7 +21,11 @@ import { CodexDraftButton } from './CodexDraft'
 const getMessageColor = (type: Message['msg_type']) => {
   switch (type) {
     case 'room_enter':
+    case 'tiktok_member':
+    case 'xiaohongshu_member':
       return 'text-blue-500'
+    case 'xiaohongshu_follow':
+      return 'text-green-500'
     case 'room_like':
       return 'text-pink-500'
     case 'room_follow':
@@ -37,10 +41,22 @@ const getMessageColor = (type: Message['msg_type']) => {
   }
 }
 
-const getMessageText = (message: Message) => {
+export const getMessageText = (message: Message) => {
   switch (message.msg_type) {
     case 'room_enter':
+    case 'tiktok_member':
+    case 'xiaohongshu_member':
       return '进入直播间'
+    case 'tiktok_leave':
+      return '离开直播间（平台明确上报）'
+    case 'tiktok_follow':
+      return '关注了主播'
+    case 'tiktok_like':
+      return '点赞了直播间'
+    case 'tiktok_gift':
+      return `${message.gift_name} ×${message.repeat_count}`
+    case 'xiaohongshu_follow':
+      return '关注了主播'
     case 'room_like':
       return '点赞了直播间'
     case 'room_follow':

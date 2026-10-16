@@ -8,7 +8,7 @@ export const providers: Record<string, ProviderInfo> = {
     name: 'DeepSeek',
     baseURL: 'https://api.deepseek.com',
     apiUrl: 'https://platform.deepseek.com/api_keys',
-    models: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
+    models: ['deepseek-flash', 'deepseek-v4-pro'],
   },
   openrouter: {
     name: 'OpenRouter',

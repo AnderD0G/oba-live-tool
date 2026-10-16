@@ -103,7 +103,7 @@ const CustomModelInput = memo(
         <Input
           value={model}
           onChange={e => onChange(e.target.value)}
-          placeholder="model，如 deepseek-reasoner"
+          placeholder="model，如 deepseek-flash"
           className="font-mono"
         />
       </div>

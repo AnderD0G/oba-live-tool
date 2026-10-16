@@ -1,16 +1,19 @@
 import { Settings2 } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
+import { IPC_CHANNELS } from 'shared/ipcChannels'
 import { autoReplyPlatforms } from '@/abilities'
 import { TaskButton } from '@/components/common/TaskButton'
 import { Title } from '@/components/common/Title'
 import { Button } from '@/components/ui/button'
+import { useAccounts } from '@/hooks/useAccounts'
 import { useAutoReply } from '@/hooks/useAutoReply'
 import { useCodexAutoStore } from '@/hooks/useCodexAutoReply'
 import { useCurrentLiveControl } from '@/hooks/useLiveControl'
 import CommentList from '@/pages/AutoReply/components/CommentList'
 import PreviewList from '@/pages/AutoReply/components/PreviewList'
 import { CodexDraftSettings } from './components/CodexDraft'
+import { DeepSeekAutoReply } from './components/DeepSeekAutoReply'
 
 export default function AutoReply() {
   const { isRunning, setIsRunning } = useAutoReply()
@@ -19,6 +22,14 @@ export default function AutoReply() {
   const handleAutoReplyToggle = async () => {
     try {
       if (useCodexAutoStore.getState().state.enabled) return
+      if (!isRunning) {
+        const id = useAccounts.getState().currentAccountId
+        const deepSeek = await window.ipcRenderer.invoke(IPC_CHANNELS.deepSeekAuto.request, {
+          action: 'state',
+          accountId: id,
+        })
+        if (deepSeek.enabled) return
+      }
       setIsRunning(!isRunning)
     } catch (error) {
       console.error('切换自动回复失败:', error)
@@ -51,6 +62,7 @@ export default function AutoReply() {
       </div>
 
       <CodexDraftSettings />
+      <DeepSeekAutoReply />
       {/* 评论和回复区域 */}
       <div className="grid grid-cols-2 gap-4">
         {/* 评论列表卡片 */}

@@ -1,4 +1,6 @@
 import { rmSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import path from 'node:path'
 import process from 'node:process'
 import tailwindcss from '@tailwindcss/vite'
@@ -37,6 +39,16 @@ export default defineConfig(({ command }) => {
             }
           },
           vite: {
+            plugins: [{
+              name: 'analysis-capture-worker-asset',
+              closeBundle: { order: 'pre', sequential: true, async handler() {
+                // The worker is a separate Node22 bundle, generated before the
+                // main build's startup/packaging hooks can consume its output.
+                await promisify(execFile)(process.execPath, [path.join(__dirname, 'scripts/build-analysis-capture-worker.mjs')], {
+                  cwd: __dirname, windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024,
+                })
+              } },
+            }],
             build: {
               sourcemap: true,
               minify: false, // 开启前后差距大概 100kb
