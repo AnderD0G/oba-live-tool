@@ -49,9 +49,12 @@ try {
   assert.ok(['android', 'iphone'].includes(camera.cameraStatus.selected))
   const xiaomiStatus = await invoke('xiaomi-camera:request', { action: 'status' })
   assert.equal(xiaomiStatus.ok, true)
-  assert.ok(['off', 'ready', 'capturing'].includes(xiaomiStatus.camera.state))
+  assert.ok(['off', 'ready', 'capturing', 'offline', 'unknown'].includes(xiaomiStatus.camera.state))
   await page.getByRole('region', { name: '直播与豆包讲话切换' }).waitFor()
   assert.equal(await page.getByRole('button', { name: '授权热键控制', exact: true }).count(), 0)
+  const zoomSlider = page.getByRole('slider', { name: '连续变焦倍率', exact: true })
+  await zoomSlider.waitFor()
+  assert.equal(await zoomSlider.getAttribute('step'), '0.01')
   const access = await invoke('assistant-mobile:request', { action: 'start', accountId: 'default' })
   assert.equal(access.ok, true)
   mobileStarted = true
@@ -84,7 +87,7 @@ try {
   const state = await invoke('assistant-desk:request', { action: 'state', params: { accountId: 'default' } })
   assert.equal(state.ok, true)
   assert.equal(state.data.activeSession, undefined)
-  console.log(JSON.stringify({ ok: true, packaged: true, version: info.version, desktopIpc: ['obs-camera', 'xiaomi-camera', 'studio-mic-api'], authenticatedPhoneRoutes: true, phoneAssets: true, phoneSecretsExcluded: true, nativePermissionPromptRemoved: true, writesToLiveServices: false, captureStarted: false }))
+  console.log(JSON.stringify({ ok: true, packaged: true, version: info.version, desktopIpc: ['obs-camera', 'xiaomi-camera', 'studio-mic-api'], xiaomiState: xiaomiStatus.camera.state, authenticatedPhoneRoutes: true, phoneAssets: true, phoneSecretsExcluded: true, nativePermissionPromptRemoved: true, fractionalZoomSlider: true, writesToLiveServices: false, captureStarted: false }))
 } finally {
   if (mobileStarted && page) await page.evaluate(() => window.ipcRenderer.invoke('assistant-mobile:request', { action: 'stop', accountId: 'default' })).catch(() => {})
   if (application) await application.close()

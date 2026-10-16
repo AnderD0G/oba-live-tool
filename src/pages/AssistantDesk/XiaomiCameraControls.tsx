@@ -13,9 +13,45 @@ import {
   xiaomiCameraStateLabels,
   xiaomiPreviewFocusPoint,
 } from '../../../shared/xiaomiCamera'
+import { LatestXiaomiZoom } from './LatestXiaomiZoom'
 
 const request = (command: XiaomiCameraCommand): Promise<XiaomiCameraResult> =>
   window.ipcRenderer.invoke(IPC_CHANNELS.xiaomiCamera.request, command)
+
+type FocusPhase =
+  | 'submitting'
+  | 'submitted'
+  | 'pending'
+  | 'focused'
+  | 'not_focused'
+  | 'timeout'
+  | 'failed'
+  | 'unconfirmed'
+  | 'cancelled'
+interface FocusPoint {
+  x: number
+  y: number
+  phase: FocusPhase
+  generation: number
+  acknowledged: boolean
+  sawPending: boolean
+  width: number
+  height: number
+  deadline?: number
+}
+const focusLabels: Record<FocusPhase, string> = {
+  submitting: '正在提交选点对焦…',
+  submitted: '对焦点已提交，等待手机结果…',
+  pending: '正在对焦，等待手机结果…',
+  focused: '手机已确认合焦，仍请观察主体清晰度',
+  not_focused: '手机报告未合焦，请重新选点',
+  timeout: '手机对焦超时，请重新选点',
+  failed: '对焦请求失败，请刷新状态后重试',
+  unconfirmed: '对焦结果未确认，请刷新状态',
+  cancelled: '本次对焦已取消',
+}
+const ratioLabel = (value: number | null | undefined) =>
+  typeof value === 'number' ? value.toFixed(2) : '未确认'
 
 /** Device controls are independent of OBS scene selection. Unmounting never stops the camera. */
 export function XiaomiCameraControls() {
@@ -24,59 +60,138 @@ export function XiaomiCameraControls() {
   const [baseUrl, setBaseUrl] = useState(DEFAULT_XIAOMI_CAMERA_BASE_URL)
   const [hasToken, setHasToken] = useState(false)
   const [token, setToken] = useState('')
-  const [zoom, setZoom] = useState('1')
+  const [zoom, setZoom] = useState('1.00')
+  const [zoomPending, setZoomPending] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [previewEnabled, setPreviewEnabled] = useState(false)
   const [preview, setPreview] = useState<XiaomiCameraPreview>()
+  const [previewUsable, setPreviewUsable] = useState(false)
+  const [focusPoint, setFocusPoint] = useState<FocusPoint>()
   const [clock, setClock] = useState(Date.now())
   const alive = useRef(false)
   const busyRef = useRef(false)
+  const busyAction = useRef('')
+  const lastDeviceWriteAt = useRef(Number.NEGATIVE_INFINITY)
+  const observedZoom = useRef<number | undefined>(undefined)
+  const focusRef = useRef<FocusPoint | undefined>(undefined)
+  const zoomPendingRef = useRef(false)
+  const zoomDesired = useRef<number | undefined>(undefined)
+  const zoomQueue = useRef<LatestXiaomiZoom | undefined>(undefined)
+  const zoomSubmit = useRef<(ratio: number) => Promise<boolean>>(async () => false)
   const serial = useRef(0)
   const zoomDirty = useRef(false)
   const previewReading = useRef(false)
   const stateReading = useRef(false)
+  const stateRefreshQueued = useRef(false)
   const image = useRef<HTMLImageElement>(null)
 
-  const apply = useCallback((result: XiaomiCameraResult, showError = true) => {
-    if (!alive.current) return
-    if (result.config) {
-      setBaseUrl(result.config.baseUrl)
-      setHasToken(result.config.hasToken)
-    }
-    if (result.camera) setCamera(result.camera)
-    if (result.settings) {
-      setSettings(result.settings)
-      if (!zoomDirty.current && typeof result.settings.zoom === 'number')
-        setZoom(String(result.settings.zoom))
-    }
-    if (result.message) setMessage(result.message)
-    if (!result.ok && showError) setError(result.error?.message || '相机操作尚未确认，请刷新状态')
-    if (result.error?.outcomeUnknown) {
-      setCamera({ state: 'unknown', timestamp: new Date().toISOString() })
-      setSettings(undefined)
-      setPreview(undefined)
-    }
+  const updateFocus = useCallback((value: FocusPoint | undefined) => {
+    focusRef.current = value
+    setFocusPoint(value)
   }, [])
 
+  const apply = useCallback(
+    (result: XiaomiCameraResult, showError = true, retainImage = false) => {
+      if (!alive.current) return
+      if (result.config) {
+        setBaseUrl(result.config.baseUrl)
+        setHasToken(result.config.hasToken)
+      }
+      if (result.camera) setCamera(result.camera)
+      if (result.settings) {
+        const observed = result.settings.observed_zoom
+        if (typeof observed === 'number') {
+          if (
+            observedZoom.current !== undefined &&
+            Math.abs(observed - observedZoom.current) > 0.0001
+          ) {
+            updateFocus(undefined)
+            setPreviewUsable(false)
+          }
+          observedZoom.current = observed
+        }
+        setSettings(result.settings)
+        if (!zoomDirty.current && typeof result.settings.zoom === 'number')
+          setZoom(result.settings.zoom.toFixed(2))
+      }
+      let point = focusRef.current
+      if (
+        point &&
+        point.generation === serial.current &&
+        ['submitting', 'submitted', 'pending', 'unconfirmed'].includes(point.phase)
+      ) {
+        if (!point.acknowledged && result.operation?.focus_submitted === true)
+          point = { ...point, acknowledged: true, phase: 'submitted', deadline: Date.now() + 6000 }
+        if (
+          point.acknowledged &&
+          result.settings?.focus_pending === true &&
+          point.phase !== 'unconfirmed'
+        )
+          point = { ...point, sawPending: true, phase: 'pending' }
+        else if (
+          point.acknowledged &&
+          point.sawPending &&
+          result.settings?.focus_pending === false
+        ) {
+          const outcome = result.settings.last_focus_result
+          if (['focused', 'not_focused', 'timeout', 'failed', 'cancelled'].includes(outcome || ''))
+            point = { ...point, phase: outcome as FocusPhase }
+        }
+        if (point !== focusRef.current) updateFocus(point)
+      }
+      if (result.message) setMessage(result.message)
+      if (!result.ok && showError) setError(result.error?.message || '相机操作尚未确认，请刷新状态')
+      if (result.error?.outcomeUnknown) {
+        setCamera({ state: 'unknown', timestamp: new Date().toISOString() })
+        setSettings(undefined)
+        setPreviewUsable(false)
+        if (!retainImage) setPreview(undefined)
+      }
+    },
+    [updateFocus],
+  )
+
+  useEffect(() => {
+    const point = focusRef.current
+    if (
+      point?.deadline &&
+      clock >= point.deadline &&
+      ['submitted', 'pending'].includes(point.phase)
+    )
+      updateFocus({ ...point, phase: 'unconfirmed' })
+  }, [clock, updateFocus])
+
   const refresh = useCallback(async () => {
-    if (stateReading.current) return
+    if (stateReading.current) {
+      stateRefreshQueued.current = true
+      return
+    }
     stateReading.current = true
-    const generation = serial.current
     try {
-      const results = await Promise.all([
-        request({ action: 'status' }),
-        request({ action: 'settings' }),
-      ])
-      if (!alive.current || generation !== serial.current) return
-      for (const result of results) apply(result)
-      if (results.every(result => result.ok)) setError('')
-    } catch {
-      if (alive.current && generation === serial.current)
-        setError('无法读取相机状态，请检查本机连接')
+      do {
+        stateRefreshQueued.current = false
+        const generation = serial.current
+        try {
+          const results = await Promise.all([
+            request({ action: 'status' }),
+            request({ action: 'settings' }),
+          ])
+          if (alive.current && generation === serial.current) {
+            for (const result of results) apply(result)
+            if (results.every(result => result.ok)) setError('')
+          }
+        } catch {
+          if (alive.current && generation === serial.current)
+            setError('无法读取相机状态，请检查本机连接')
+        }
+        // A mutation can invalidate a pending read. Coalesce its refresh with
+        // manual clicks and read again using the latest generation; never replay writes.
+      } while (alive.current && stateRefreshQueued.current)
     } finally {
       stateReading.current = false
+      stateRefreshQueued.current = false
     }
   }, [apply])
 
@@ -98,18 +213,45 @@ export function XiaomiCameraControls() {
     }
   }, [apply, refresh])
 
-  const perform = async (command: XiaomiCameraCommand) => {
-    if (busyRef.current) return
+  const perform = async (command: XiaomiCameraCommand): Promise<boolean> => {
+    if (busyRef.current || (zoomPendingRef.current && command.action !== 'zoom')) return false
     busyRef.current = true
+    busyAction.current = command.action
     serial.current++
     setBusy(command.action)
     setError('')
     setMessage('')
-    if (!['config-save', 'config-get'].includes(command.action)) setPreview(undefined)
+    const retainImage = command.action === 'focus' || command.action === 'zoom'
+    setPreviewUsable(false)
+    if (command.action === 'focus')
+      updateFocus({
+        x: command.x,
+        y: command.y,
+        phase: 'submitting',
+        generation: serial.current,
+        acknowledged: false,
+        sawPending: false,
+        width: image.current?.naturalWidth || 0,
+        height: image.current?.naturalHeight || 0,
+      })
+    else updateFocus(undefined)
+    if (!retainImage && !['config-save', 'config-get'].includes(command.action))
+      setPreview(undefined)
     try {
+      if (['start', 'stop', 'zoom', 'focus', 'autofocus'].includes(command.action)) {
+        const remaining = Math.max(0, 300 - (Date.now() - lastDeviceWriteAt.current))
+        if (remaining) await new Promise(resolve => setTimeout(resolve, remaining))
+        if (!alive.current) return false
+        lastDeviceWriteAt.current = Date.now()
+      }
       const result = await request(command)
-      if (!alive.current) return
-      apply(result)
+      if (!alive.current) return false
+      apply(result, true, retainImage)
+      if (command.action === 'focus' && !result.ok && focusRef.current)
+        updateFocus({
+          ...focusRef.current,
+          phase: result.error?.outcomeUnknown ? 'unconfirmed' : 'failed',
+        })
       if (command.action === 'config-save' && result.ok) {
         setToken('')
         setPreview(undefined)
@@ -117,47 +259,93 @@ export function XiaomiCameraControls() {
         setCamera(undefined)
       }
       if (command.action === 'zoom' && result.ok) {
-        zoomDirty.current = false
-        setZoom(String(command.ratio))
+        if (zoomDesired.current === command.ratio) {
+          zoomDirty.current = false
+          setZoom(command.ratio.toFixed(2))
+        }
       }
       if (result.ok || result.error?.outcomeUnknown) void refresh()
+      return result.ok
     } catch {
       if (alive.current) {
         setError('请求结果未确认，请先刷新状态再决定是否重试')
         setCamera(undefined)
         setSettings(undefined)
-        setPreview(undefined)
+        if (!retainImage) setPreview(undefined)
+        if (command.action === 'focus' && focusRef.current)
+          updateFocus({ ...focusRef.current, phase: 'unconfirmed' })
       }
+      return false
     } finally {
       busyRef.current = false
+      busyAction.current = ''
       if (alive.current) setBusy('')
     }
+  }
+
+  zoomSubmit.current = ratio => perform({ action: 'zoom', ratio })
+  useEffect(() => {
+    const queue = new LatestXiaomiZoom({
+      submit: ratio => zoomSubmit.current(ratio),
+      onPending: pending => {
+        zoomPendingRef.current = pending
+        if (alive.current) setZoomPending(pending)
+      },
+    })
+    zoomQueue.current = queue
+    return () => {
+      queue.dispose()
+      if (zoomQueue.current === queue) zoomQueue.current = undefined
+    }
+  }, [])
+
+  const queueZoom = (ratio: number) => {
+    if (
+      !Number.isFinite(ratio) ||
+      ratio < (settings?.zoom_min || 1) ||
+      ratio > (settings?.zoom_max || 10)
+    )
+      return
+    zoomDesired.current = ratio
+    zoomDirty.current = true
+    setZoom(ratio.toFixed(2))
+    setPreviewUsable(false)
+    updateFocus(undefined)
+    zoomQueue.current?.request(ratio)
   }
 
   useEffect(() => {
     if (!previewEnabled || !hasToken) return
     let stopped = false
     const update = async () => {
-      if (previewReading.current || busyRef.current || document.visibilityState !== 'visible')
+      if (
+        previewReading.current ||
+        (busyRef.current && !['zoom', 'focus'].includes(busyAction.current)) ||
+        document.visibilityState !== 'visible'
+      )
         return
       previewReading.current = true
       const generation = serial.current
+      const writingAtStart = busyRef.current || zoomPendingRef.current
       try {
         const controls = await request({ action: 'settings' })
         if (stopped || !alive.current || generation !== serial.current) return
         apply(controls, false)
         if (!controls.ok || !controls.settings?.available) {
-          setPreview(undefined)
+          setPreviewUsable(false)
           return
         }
         const result = await request({ action: 'preview' })
         if (stopped || !alive.current || generation !== serial.current) return
-        setPreview(result.ok ? result.preview : undefined)
+        if (result.ok && result.preview) {
+          setPreview(result.preview)
+          setPreviewUsable(!writingAtStart && !busyRef.current && !zoomPendingRef.current)
+        } else setPreviewUsable(false)
         setClock(Date.now())
         if (!result.ok) setMessage(result.error?.message || '正在等待新鲜操作预览')
       } catch {
         if (!stopped && alive.current) {
-          setPreview(undefined)
+          setPreviewUsable(false)
           setMessage('操作预览暂不可用，请刷新相机状态')
         }
       } finally {
@@ -176,9 +364,17 @@ export function XiaomiCameraControls() {
     }
   }, [previewEnabled, hasToken, apply])
 
-  const fresh = !!preview && clock < preview.expiresAt
-  const lensEnabled = hasToken && settings?.available === true && !busy
+  const fresh = previewUsable && !!preview && clock < preview.expiresAt
+  const deviceBusy = !!busy || zoomPending
+  const lensEnabled = hasToken && settings?.available === true && !deviceBusy
+  const zoomEnabled = hasToken && settings?.available === true && (!busy || busy === 'zoom')
   const focusEnabled = lensEnabled && settings.focus_supported === true && fresh
+  const focusColor =
+    focusPoint?.phase === 'focused'
+      ? '#22c55e'
+      : focusPoint && ['not_focused', 'timeout', 'failed'].includes(focusPoint.phase)
+        ? '#ef4444'
+        : '#facc15'
   return (
     <section className="assistant-panel" aria-label="小米4K相机与镜头控制">
       <div className="assistant-actions">
@@ -191,7 +387,7 @@ export function XiaomiCameraControls() {
         <Button
           size="sm"
           variant="outline"
-          disabled={!hasToken || !!busy}
+          disabled={!hasToken || deviceBusy}
           onClick={() => void refresh()}
         >
           <RefreshCw size={14} />
@@ -200,7 +396,7 @@ export function XiaomiCameraControls() {
         <Button
           size="sm"
           variant="outline"
-          disabled={!hasToken || !!busy}
+          disabled={!hasToken || deviceBusy}
           onClick={() => void perform({ action: 'start' })}
         >
           开启小米相机
@@ -208,7 +404,7 @@ export function XiaomiCameraControls() {
         <Button
           size="sm"
           variant="outline"
-          disabled={!hasToken || !!busy}
+          disabled={!hasToken || deviceBusy}
           onClick={() => void perform({ action: 'stop' })}
         >
           停止小米相机
@@ -224,6 +420,24 @@ export function XiaomiCameraControls() {
         不会自动停止小米。就绪或连接消费者不代表视频画质已验证。
       </p>
       <div className="assistant-actions">
+        <label className="assistant-muted" htmlFor="xiaomi-camera-zoom-slider">
+          连续变焦
+        </label>
+        <input
+          id="xiaomi-camera-zoom-slider"
+          type="range"
+          aria-label="连续变焦倍率"
+          min={settings?.zoom_min || 1}
+          max={settings?.zoom_max || 10}
+          step="0.01"
+          value={Number(zoom) || settings?.zoom_min || 1}
+          disabled={!zoomEnabled}
+          className="w-64 max-w-full"
+          onChange={event => queueZoom(Number(event.target.value))}
+        />
+        <output aria-live="polite">
+          {Number.isFinite(Number(zoom)) ? Number(zoom).toFixed(2) : '—'}×
+        </output>
         <label className="assistant-muted" htmlFor="xiaomi-camera-zoom">
           变焦倍率
         </label>
@@ -232,10 +446,10 @@ export function XiaomiCameraControls() {
           type="number"
           min={settings?.zoom_min || 1}
           max={settings?.zoom_max || 10}
-          step="0.1"
+          step="0.01"
           className="w-24"
           value={zoom}
-          disabled={!lensEnabled}
+          disabled={!zoomEnabled}
           onChange={event => {
             zoomDirty.current = true
             setZoom(event.target.value)
@@ -244,8 +458,8 @@ export function XiaomiCameraControls() {
         <Button
           size="sm"
           variant="outline"
-          disabled={!lensEnabled || !Number.isFinite(Number(zoom))}
-          onClick={() => void perform({ action: 'zoom', ratio: Number(zoom) })}
+          disabled={!zoomEnabled || !Number.isFinite(Number(zoom))}
+          onClick={() => queueZoom(Number(zoom))}
         >
           应用倍率
         </Button>
@@ -258,15 +472,24 @@ export function XiaomiCameraControls() {
           恢复自动对焦
         </Button>
         <span className="assistant-muted">
-          实际倍率：{settings?.observed_zoom ?? '未观测'}；下次启动：
-          {settings?.saved_zoom ?? '未确认'}
+          实际倍率：
+          {settings?.observed_zoom == null ? '未观测' : ratioLabel(settings.observed_zoom)}
+          ；下次启动：
+          {ratioLabel(settings?.saved_zoom)}
         </span>
       </div>
       {settings?.available === false && (
         <p className="assistant-warning">镜头控制暂不可用，请核对手机连接和相机状态。</p>
       )}
-      {settings?.focus_pending && <p className="assistant-muted">对焦已提交，正在等待手机结果。</p>}
-      {settings?.last_focus_result && (
+      {focusPoint && (
+        <p role="status" aria-live="polite" className="assistant-muted">
+          {focusLabels[focusPoint.phase]}
+        </p>
+      )}
+      {!focusPoint && settings?.focus_pending && (
+        <p className="assistant-muted">手机正在处理对焦。</p>
+      )}
+      {!focusPoint && settings?.last_focus_result && (
         <p className="assistant-muted">
           最近对焦结果：{settings.last_focus_result}（仍需观察主体是否清晰）
         </p>
@@ -275,10 +498,12 @@ export function XiaomiCameraControls() {
         <Button
           size="sm"
           variant="outline"
-          disabled={!hasToken || !!busy}
+          disabled={!hasToken}
           onClick={() => {
             setPreviewEnabled(value => !value)
             setPreview(undefined)
+            setPreviewUsable(false)
+            updateFocus(undefined)
           }}
         >
           {previewEnabled ? '关闭操作预览' : '打开操作预览'}
@@ -295,8 +520,14 @@ export function XiaomiCameraControls() {
               aria-label="在小米新鲜预览中点按对焦"
               disabled={!focusEnabled}
               className="block w-[180px] max-w-full overflow-hidden rounded border p-0 disabled:cursor-default"
+              style={{ position: 'relative' }}
               onClick={event => {
-                if (!preview || Date.now() >= preview.expiresAt || !image.current) {
+                if (
+                  !previewUsable ||
+                  !preview ||
+                  Date.now() >= preview.expiresAt ||
+                  !image.current
+                ) {
                   setError('预览已过期，请等待新图后再对焦')
                   return
                 }
@@ -323,14 +554,43 @@ export function XiaomiCameraControls() {
                 src={preview.dataUrl}
                 alt="小米相机竖屏操作预览"
                 className="block h-auto w-full"
+                onLoad={event => {
+                  const point = focusRef.current
+                  if (
+                    point &&
+                    (point.width !== event.currentTarget.naturalWidth ||
+                      point.height !== event.currentTarget.naturalHeight)
+                  )
+                    updateFocus(undefined)
+                }}
               />
+              {focusPoint && (
+                <span
+                  role="img"
+                  aria-label="点按对焦位置"
+                  style={{
+                    position: 'absolute',
+                    left: `${focusPoint.x * 100}%`,
+                    top: `${focusPoint.y * 100}%`,
+                    width: 36,
+                    height: 36,
+                    transform: 'translate(-50%, -50%)',
+                    pointerEvents: 'none',
+                    borderWidth: 2,
+                    borderStyle: 'solid',
+                    borderColor: focusColor,
+                    boxShadow: '0 0 2px #000',
+                    borderRadius: 4,
+                  }}
+                />
+              )}
             </button>
           ) : (
             <span className="assistant-muted">等待新鲜预览；这不代表主视频已经停止。</span>
           )}
           {preview && (
             <span className="assistant-muted">
-              {fresh ? '可在图像内点按对焦' : '图像已过期，等待更新'}
+              {fresh ? '可在图像内点按对焦' : '图像仅供查看，等待新鲜预览后可再次对焦'}
               <br />
               变焦后先确认实际倍率，再使用新图选点。
             </span>
@@ -355,7 +615,7 @@ export function XiaomiCameraControls() {
             aria-label="小米相机服务地址"
             value={baseUrl}
             onChange={event => setBaseUrl(event.target.value)}
-            disabled={!!busy}
+            disabled={deviceBusy}
           />
           <Input
             className="max-w-sm"
@@ -365,12 +625,12 @@ export function XiaomiCameraControls() {
             value={token}
             placeholder={hasToken ? '留空保留已保存密钥' : '输入单独提供的 Bearer 密钥'}
             onChange={event => setToken(event.target.value)}
-            disabled={!!busy}
+            disabled={deviceBusy}
           />
           <Button
             size="sm"
             variant="outline"
-            disabled={!!busy}
+            disabled={deviceBusy}
             onClick={() =>
               void perform({
                 action: 'config-save',
